@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<meta name="theme-color" content="#C4611A">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#080808">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Iron G CC">
@@ -11,63 +11,60 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.0">
+<link rel="stylesheet" href="styles.css?v=2.0">
 </head>
 <body>
 <div class="app">
 
-<!-- SIDEBAR -->
-<div class="sidebar" id="sidebar">
-  <div class="sidebar-logo">
-    <div class="sidebar-logo-text">IRON <span>G</span></div>
-    <div class="sidebar-logo-sub">Command Center</div>
-  </div>
-  <nav class="sidebar-nav">
-    <div class="nav-label">Operations</div>
-    <div class="nav-item active" onclick="showPage('dashboard')"><span class="nav-icon">⚡</span>Dashboard</div>
-    <div class="nav-item" onclick="showPage('fleet')"><span class="nav-icon">🚛</span>Fleet Status</div>
-    <div class="nav-item" onclick="showPage('new-booking')"><span class="nav-icon">➕</span>New Booking<span class="nav-badge" id="activeBadge">0</span></div>
-    <div class="nav-item" onclick="showPage('active-rentals')"><span class="nav-icon">📋</span>Active Rentals</div>
-    <div class="nav-label">Tools</div>
-    <div class="nav-item" onclick="showPage('messages')"><span class="nav-icon">💬</span>Message Templates</div>
-    <div class="nav-item" onclick="showPage('agreement')"><span class="nav-icon">📄</span>Rental Agreement</div>
-    <div class="nav-item" onclick="showPage('pricing')"><span class="nav-icon">💰</span>Pricing Reference</div>
-    <div class="nav-label">Records</div>
-    <div class="nav-item" onclick="showPage('history')"><span class="nav-icon">📊</span>Rental History</div>
-    <div class="nav-item" onclick="showPage('settings')"><span class="nav-icon">⚙️</span>Settings</div>
-  </nav>
-  <div class="sidebar-footer">Iron G Equipment Co. LLC<br><span style="color:var(--orange)">(405) 393-4161</span></div>
-</div>
+<!-- HEADER -->
+<header class="header" id="appHeader">
+  <button class="back-btn" id="backBtn" onclick="goBack()">&#8592;</button>
+  <div class="header-wordmark">Iron <span>G</span></div>
+</header>
 
-<!-- MAIN -->
-<div class="main">
-  <div class="topbar">
-    <div class="topbar-title" id="pageTitle">Dashboard</div>
-    <div class="topbar-right">
-      <span class="clock" id="clock"></span>
-      <button class="btn btn-primary btn-sm" onclick="showPage('new-booking')">+ New Booking</button>
-    </div>
+<!-- DRAWER OVERLAY -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+
+<!-- DRAWER -->
+<nav class="drawer" id="drawer">
+  <div class="drawer-header">
+    <div class="drawer-logo">Iron <span>G</span></div>
+    <div class="drawer-sub">Command Center</div>
   </div>
+  <div class="drawer-nav">
+    <div class="drawer-item" id="dnav-dashboard" onclick="navTo('dashboard')"><span class="drawer-icon">⚡</span>Dashboard</div>
+    <div class="drawer-item" id="dnav-fleet" onclick="navTo('fleet')"><span class="drawer-icon">🚛</span>Fleet</div>
+    <div class="drawer-item" id="dnav-active-rentals" onclick="navTo('active-rentals')"><span class="drawer-icon">📋</span>Bookings</div>
+    <div class="drawer-item" id="dnav-new-booking" onclick="navTo('new-booking')"><span class="drawer-icon">📝</span>Workflow</div>
+    <div class="drawer-item" id="dnav-settings" onclick="navTo('settings')"><span class="drawer-icon">⚙️</span>Settings</div>
+  </div>
+  <div class="drawer-footer">Iron G Equipment Co. LLC<br><span style="color:var(--primary)">(405) 393-4161</span></div>
+</nav>
+
+<!-- PAGES -->
+<div class="pages">
+  <!-- hidden shims for JS compatibility -->
+  <span id="clock" style="display:none"></span>
+  <span id="pageTitle" style="display:none"></span>
+  <span class="nav-badge" id="activeBadge" style="display:none">0</span>
 
   <!-- DASHBOARD -->
   <div class="page active" id="page-dashboard">
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-label">Trailers Available</div><div class="stat-value g" id="stat-avail">2</div><div class="stat-sub">of 2 in fleet</div></div>
+      <div class="stat-card"><div class="stat-label">Available</div><div class="stat-value g" id="stat-avail">2</div><div class="stat-sub">of 2 trailers</div></div>
       <div class="stat-card"><div class="stat-label">Active Rentals</div><div class="stat-value o" id="stat-active">0</div><div class="stat-sub">currently out</div></div>
-      <div class="stat-card"><div class="stat-label">This Month Revenue</div><div class="stat-value" id="stat-rev">$0</div><div class="stat-sub">confirmed paid</div></div>
+      <div class="stat-card"><div class="stat-label">Month Revenue</div><div class="stat-value" id="stat-rev">$0</div><div class="stat-sub">confirmed paid</div></div>
       <div class="stat-card"><div class="stat-label">Total Rentals</div><div class="stat-value" id="stat-total">0</div><div class="stat-sub">all time</div></div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-      <div class="card"><div class="card-header"><div class="card-title">Fleet Status</div><button class="btn btn-ghost btn-sm" onclick="showPage('fleet')">View All</button></div><div class="card-body" id="dashFleet"></div></div>
-      <div class="card"><div class="card-header"><div class="card-title">Recent Activity</div></div><div class="card-body" id="dashActivity"></div></div>
-    </div>
+    <div class="card"><div class="card-header"><div class="card-title">Fleet Status</div><button class="btn btn-ghost btn-sm" onclick="showPage('fleet')">View All</button></div><div class="card-body" id="dashFleet"></div></div>
     <div class="card"><div class="card-header"><div class="card-title">Upcoming Returns</div></div><div class="card-body" id="dashReturns"></div></div>
+    <div class="card"><div class="card-header"><div class="card-title">Recent Activity</div></div><div class="card-body" id="dashActivity"></div></div>
   </div>
 
   <!-- FLEET -->
   <div class="page" id="page-fleet">
     <div class="fleet-grid" id="fleetCards"></div>
-    <div class="card"><div class="card-header"><div class="card-title">Combo Lock Manager</div><div style="font-size:12px;color:var(--muted)">Change after every return</div></div><div class="card-body"><div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;" id="comboManager"></div></div></div>
+    <div class="card"><div class="card-header"><div class="card-title">Combo Lock Manager</div><div style="font-size:11px;color:var(--muted)">Change after every return</div></div><div class="card-body"><div id="comboManager"></div></div></div>
   </div>
 
   <!-- NEW BOOKING -->
@@ -75,89 +72,80 @@
     <div class="flow-steps">
       <div class="flow-step active" id="fs1"><div class="fs-num">1</div><div class="fs-label">Customer</div></div>
       <div class="flow-arrow">›</div>
-      <div class="flow-step" id="fs2"><div class="fs-num">2</div><div class="fs-label">Rental Details</div></div>
+      <div class="flow-step" id="fs2"><div class="fs-num">2</div><div class="fs-label">Details</div></div>
       <div class="flow-arrow">›</div>
-      <div class="flow-step" id="fs3"><div class="fs-num">3</div><div class="fs-label">Review & Confirm</div></div>
+      <div class="flow-step" id="fs3"><div class="fs-num">3</div><div class="fs-label">Review</div></div>
       <div class="flow-arrow">›</div>
-      <div class="flow-step" id="fs4"><div class="fs-num">4</div><div class="fs-label">Send to Customer</div></div>
+      <div class="flow-step" id="fs4"><div class="fs-num">4</div><div class="fs-label">Send</div></div>
     </div>
 
     <!-- STEP 1 -->
     <div id="step1" class="fade-in">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-        <div class="card">
-          <div class="card-header"><div class="card-title">Customer Information</div></div>
-          <div class="card-body">
-            <div class="fr"><div class="fg"><label class="fl">First Name *</label><input class="fi" id="f-fn" type="text" placeholder="John"></div><div class="fg"><label class="fl">Last Name *</label><input class="fi" id="f-ln" type="text" placeholder="Smith"></div></div>
-            <div class="fg"><label class="fl">Phone Number *</label><input class="fi" id="f-ph" type="tel" placeholder="(405) 555-0000"></div>
-            <div class="fg"><label class="fl">Email Address</label><input class="fi" id="f-em" type="email" placeholder="customer@email.com"></div>
-            <div class="fg"><label class="fl">City</label><input class="fi" id="f-cy" type="text" placeholder="Yukon, Edmond, Moore..."></div>
-            <div class="fg"><label class="fl">Tow Vehicle</label><input class="fi" id="f-vh" type="text" placeholder="2020 Ford F-250"></div>
-            <div class="fg">
-              <label class="fl">Preferred Contact Method</label>
-              <div class="comm-toggle" id="commToggle">
-                <button class="comm-opt active" onclick="setComm('text',this)">📱 Text</button>
-                <button class="comm-opt" onclick="setComm('email',this)">📧 Email</button>
-                <button class="comm-opt" onclick="setComm('both',this)">Both</button>
-              </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Customer Information</div></div>
+        <div class="card-body">
+          <div class="fr"><div class="fg"><label class="fl">First Name *</label><input class="fi" id="f-fn" type="text" placeholder="John"></div><div class="fg"><label class="fl">Last Name *</label><input class="fi" id="f-ln" type="text" placeholder="Smith"></div></div>
+          <div class="fg"><label class="fl">Phone Number *</label><input class="fi" id="f-ph" type="tel" placeholder="(405) 555-0000"></div>
+          <div class="fg"><label class="fl">Email Address</label><input class="fi" id="f-em" type="email" placeholder="customer@email.com"></div>
+          <div class="fg"><label class="fl">City</label><input class="fi" id="f-cy" type="text" placeholder="Yukon, Edmond, Moore..."></div>
+          <div class="fg"><label class="fl">Tow Vehicle</label><input class="fi" id="f-vh" type="text" placeholder="2020 Ford F-250"></div>
+          <div class="fg">
+            <label class="fl">Preferred Contact Method</label>
+            <div class="comm-toggle" id="commToggle">
+              <button class="comm-opt active" onclick="setComm('text',this)">📱 Text</button>
+              <button class="comm-opt" onclick="setComm('email',this)">📧 Email</button>
+              <button class="comm-opt" onclick="setComm('both',this)">Both</button>
             </div>
           </div>
         </div>
-        <div class="card"><div class="card-header"><div class="card-title">Availability</div></div><div class="card-body" id="availPanel"></div></div>
       </div>
-      <div style="margin-top:16px;display:flex;justify-content:flex-end;"><button class="btn btn-primary" onclick="goStep(2)">Next: Rental Details →</button></div>
+      <div class="card"><div class="card-header"><div class="card-title">Availability</div></div><div class="card-body" id="availPanel"></div></div>
+      <div style="margin-top:4px;display:flex;justify-content:flex-end;"><button class="btn btn-primary" onclick="goStep(2)">Next: Rental Details →</button></div>
     </div>
 
     <!-- STEP 2 -->
     <div id="step2" style="display:none;" class="fade-in">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-        <div class="card">
-          <div class="card-header"><div class="card-title">Rental Details</div></div>
-          <div class="card-body">
-            <div class="fg"><label class="fl">Trailer *</label><select class="form-select" id="f-tr" onchange="calcPrice()"><option value="">— Select —</option><option value="utility">7x18 Utility Trailer 7K</option><option value="hauler">7x18 Car Hauler 7K</option></select></div>
-            <div class="fr"><div class="fg"><label class="fl">Start Date *</label><input class="fi" id="f-sd" type="date" onchange="calcPrice()"></div><div class="fg"><label class="fl">End Date *</label><input class="fi" id="f-ed" type="date" onchange="calcPrice()"></div></div>
-            <div class="fg"><label class="fl">What Are They Hauling?</label><input class="fi" id="f-ld" type="text" placeholder="Gravel, furniture, ATV..."></div>
-            <div class="fg"><label class="fl">How Did They Find Us?</label><select class="form-select" id="f-src"><option value="">— Select —</option><option>Google Search</option><option>Google Maps</option><option>Facebook</option><option>Facebook Marketplace</option><option>TikTok</option><option>Friend/Family</option><option>Nextdoor</option><option>Craigslist</option><option>Repeat Customer</option><option>Other</option></select></div>
-            <div class="fg"><label class="fl">Load Type / Notes</label><input class="fi" id="f-ld" type="text" placeholder="e.g. Furniture, ATV, project car..."></div>
-            <div class="fg"><label class="fl">Notes</label><textarea class="form-textarea" id="f-nt" placeholder="Special requests, delivery needed..."></textarea></div>
-          </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Rental Details</div></div>
+        <div class="card-body">
+          <div class="fg"><label class="fl">Trailer *</label><select class="form-select" id="f-tr" onchange="calcPrice()"><option value="">— Select —</option><option value="utility">7x18 Utility Trailer 7K</option><option value="hauler">7x18 Car Hauler 7K</option></select></div>
+          <div class="fr"><div class="fg"><label class="fl">Start Date *</label><input class="fi" id="f-sd" type="date" onchange="calcPrice()"></div><div class="fg"><label class="fl">End Date *</label><input class="fi" id="f-ed" type="date" onchange="calcPrice()"></div></div>
+          <div class="fg"><label class="fl">What Are They Hauling?</label><input class="fi" id="f-ld" type="text" placeholder="Gravel, furniture, ATV..."></div>
+          <div class="fg"><label class="fl">How Did They Find Us?</label><select class="form-select" id="f-src"><option value="">— Select —</option><option>Google Search</option><option>Google Maps</option><option>Facebook</option><option>Facebook Marketplace</option><option>TikTok</option><option>Friend/Family</option><option>Nextdoor</option><option>Craigslist</option><option>Repeat Customer</option><option>Other</option></select></div>
+          <div class="fg"><label class="fl">Notes</label><textarea class="form-textarea" id="f-nt" placeholder="Special requests, delivery needed..."></textarea></div>
         </div>
-        <div class="card"><div class="card-header"><div class="card-title">Price Calculator</div></div><div class="card-body" id="priceCalc"><div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div></div></div>
       </div>
-      <div style="margin-top:16px;display:flex;justify-content:space-between;"><button class="btn btn-ghost" onclick="goStep(1)">← Back</button><button class="btn btn-primary" onclick="goStep(3)">Next: Review →</button></div>
+      <div class="card"><div class="card-header"><div class="card-title">Price Calculator</div></div><div class="card-body" id="priceCalc"><div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div></div></div>
+      <div style="margin-top:4px;display:flex;justify-content:space-between;"><button class="btn btn-ghost" onclick="goStep(1)">← Back</button><button class="btn btn-primary" onclick="goStep(3)">Next: Review →</button></div>
     </div>
 
     <!-- STEP 3 -->
     <div id="step3" style="display:none;" class="fade-in">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-        <div>
-          <div class="cpanel" id="bookSummary"></div>
-          <div class="card">
-            <div class="card-header"><div class="card-title">Pre-Booking Checklist</div></div>
-            <div class="card-body">
-              <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">Confirm these BEFORE booking. Payment is collected in Step 4 after the agreement is signed.</p>
-              <label style="display:flex;gap:10px;align-items:center;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="chk1" style="accent-color:var(--orange);width:16px;height:16px;flex-shrink:0;"><span style="font-size:14px;">Valid driver's license confirmed</span></label>
-              <label style="display:flex;gap:10px;align-items:center;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="chk2" style="accent-color:var(--orange);width:16px;height:16px;flex-shrink:0;"><span style="font-size:14px;">Proof of auto insurance covering towing confirmed</span></label>
-              <label style="display:flex;gap:10px;align-items:center;cursor:pointer;"><input type="checkbox" id="chk3" style="accent-color:var(--orange);width:16px;height:16px;flex-shrink:0;"><span style="font-size:14px;">Tow vehicle verified as capable for this trailer</span></label>
-              <div id="chk-warn" style="display:none;background:rgba(239,68,68,.1);border-left:3px solid var(--red);color:#fca5a5;padding:10px 14px;margin-top:12px;font-size:13px;border-radius:1px;"></div>
-            </div>
-          </div>
+      <div class="cpanel" id="bookSummary"></div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Pre-Booking Checklist</div></div>
+        <div class="card-body">
+          <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">Confirm these BEFORE booking. Payment is collected in Step 4 after the agreement is signed.</p>
+          <label style="display:flex;gap:10px;align-items:center;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="chk1" style="accent-color:var(--primary);width:18px;height:18px;flex-shrink:0;"><span style="font-size:14px;">Valid driver's license confirmed</span></label>
+          <label style="display:flex;gap:10px;align-items:center;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="chk2" style="accent-color:var(--primary);width:18px;height:18px;flex-shrink:0;"><span style="font-size:14px;">Proof of auto insurance covering towing confirmed</span></label>
+          <label style="display:flex;gap:10px;align-items:center;cursor:pointer;"><input type="checkbox" id="chk3" style="accent-color:var(--primary);width:18px;height:18px;flex-shrink:0;"><span style="font-size:14px;">Tow vehicle verified as capable for this trailer</span></label>
+          <div id="chk-warn" style="display:none;background:rgba(224,85,85,.1);border-left:3px solid var(--danger);color:#EF9A9A;padding:10px 14px;margin-top:12px;font-size:13px;border-radius:4px;"></div>
         </div>
-        <div class="card"><div class="card-header"><div class="card-title">Combo Code</div></div><div class="card-body" id="comboAssign"></div></div>
       </div>
-      <div style="margin-top:16px;display:flex;justify-content:space-between;">
+      <div class="card"><div class="card-header"><div class="card-title">Combo Code</div></div><div class="card-body" id="comboAssign"></div></div>
+      <div style="margin-top:4px;display:flex;justify-content:space-between;">
         <button class="btn btn-ghost" onclick="goStep(2)">← Back</button>
-        <button class="btn btn-success" onclick="confirmBooking()">✓ Confirm Booking & Proceed to Step 4</button>
+        <button class="btn btn-success" onclick="confirmBooking()">✓ Confirm Booking</button>
       </div>
     </div>
 
     <!-- STEP 4 -->
     <div id="step4" style="display:none;" class="fade-in">
-      <div class="alert as">✅ Booking confirmed. Work through the 5 sections below in order.</div>
+      <div class="alert as">✅ Booking confirmed. Work through the sections below in order.</div>
 
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:10px 14px;background:var(--steel);border:1px solid var(--border);border-radius:2px;">
-        <span style="font-size:12px;color:var(--muted);font-family:'Oswald',sans-serif;letter-spacing:1px;text-transform:uppercase;">Customer Preference:</span>
-        <span id="commDisplay" style="font-family:'Oswald',sans-serif;font-size:14px;font-weight:600;color:var(--orange);text-transform:uppercase;letter-spacing:1px;"></span>
+      <div style="background:var(--surface);border:1px solid #2a2a2a;padding:10px 14px;margin-bottom:14px;border-radius:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:11px;color:var(--muted);font-family:'Oswald',sans-serif;letter-spacing:1px;text-transform:uppercase;">Customer Preference:</span>
+        <span id="commDisplay" style="font-family:'Oswald',sans-serif;font-size:14px;font-weight:600;color:var(--primary);text-transform:uppercase;letter-spacing:1px;"></span>
         <button class="btn btn-ghost btn-sm" style="margin-left:auto;" onclick="goStep(1)">Change</button>
       </div>
 
@@ -176,10 +164,10 @@
             <button class="btn btn-ghost btn-sm" onclick="openSMS('msg-quote')">📱 Open in Messages</button>
           </div>
         </div>
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;">
           <label style="display:flex;gap:10px;align-items:center;cursor:pointer;">
-            <input type="checkbox" id="quoteSent" style="accent-color:var(--green);width:18px;height:18px;flex-shrink:0;" onchange="onQuoteSent()">
-            <span style="font-size:14px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Quote sent — customer confirmed</span>
+            <input type="checkbox" id="quoteSent" style="accent-color:var(--success);width:18px;height:18px;flex-shrink:0;" onchange="onQuoteSent()">
+            <span style="font-size:13px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Quote sent — customer confirmed</span>
           </label>
         </div>
       </div>
@@ -188,7 +176,7 @@
       <div class="gate-section gate-locked" id="gate1">
         <div class="gate-header">
           <div class="gate-num">1</div>
-          <div class="gate-title">Send Rental Agreement & Get Signature</div>
+          <div class="gate-title">Send Rental Agreement &amp; Get Signature</div>
           <div class="gate-status" id="gate1-status">Locked — send quote first</div>
         </div>
         <div id="print-agreement"><div class="agr" id="agreementPreview"></div></div>
@@ -196,10 +184,10 @@
           <button class="btn btn-primary btn-sm" onclick="window.print()">🖨️ Print / Save PDF</button>
           <button class="btn btn-ghost btn-sm" onclick="copyEl('agreementPreview')">📋 Copy Agreement Text</button>
         </div>
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;">
           <label style="display:flex;gap:10px;align-items:center;cursor:pointer;">
-            <input type="checkbox" id="agrSigned" style="accent-color:var(--green);width:18px;height:18px;flex-shrink:0;" onchange="onAgrSigned()">
-            <span style="font-size:14px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Agreement has been signed by customer</span>
+            <input type="checkbox" id="agrSigned" style="accent-color:var(--success);width:18px;height:18px;flex-shrink:0;" onchange="onAgrSigned()">
+            <span style="font-size:13px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Agreement has been signed by customer</span>
           </label>
         </div>
       </div>
@@ -219,21 +207,21 @@
             <button class="btn btn-ghost btn-sm" onclick="openSMS('msg-payment')">📱 Open in Messages</button>
           </div>
         </div>
-        <div style="background:var(--steel);border:1px solid var(--border);padding:12px 14px;border-radius:2px;margin-bottom:14px;">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;font-family:'Oswald',sans-serif;margin-bottom:8px;">Payment Methods to Accept</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--orange);">💲 Cashapp: <span id="disp-cashapp" style="color:var(--white);">—</span></span>
-            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--orange);">💜 Venmo: <span id="disp-venmo" style="color:var(--white);">—</span></span>
-            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--orange);">🔲 Square: <span id="disp-square" style="color:var(--white);">—</span></span>
+        <div style="background:#1a1a1a;border:1px solid #2a2a2a;padding:12px 14px;border-radius:4px;margin-bottom:14px;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;font-family:'Oswald',sans-serif;margin-bottom:8px;">Payment Methods</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--primary);">💲 Cashapp: <span id="disp-cashapp" style="color:var(--white);">—</span></span>
+            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--primary);">💜 Venmo: <span id="disp-venmo" style="color:var(--white);">—</span></span>
+            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--primary);">🔲 Square: <span id="disp-square" style="color:var(--white);">—</span></span>
           </div>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px;">Update your payment handles in Settings.</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;">Update payment handles in Settings.</div>
         </div>
-        <div style="padding-top:14px;border-top:1px solid var(--border);">
+        <div style="padding-top:14px;border-top:1px solid #1a1a1a;">
           <button class="btn btn-success" style="width:100%;" onclick="onPaymentConfirmed()">💳 Payment Received — Unlock Pickup Instructions</button>
         </div>
       </div>
 
-      <!-- GATE 3: Confirmation + Combo Code -->
+      <!-- GATE 3: Pickup Instructions -->
       <div class="gate-section gate-locked" id="gate3">
         <div class="gate-header">
           <div class="gate-num">3</div>
@@ -263,7 +251,7 @@
         </div>
       </div>
 
-      <div style="display:flex;justify-content:space-between;margin-top:4px;">
+      <div style="display:flex;justify-content:space-between;margin-top:4px;gap:8px;">
         <button class="btn btn-ghost" onclick="newBooking()">+ New Booking</button>
         <button class="btn btn-primary" onclick="showPage('active-rentals')">View Active Rentals →</button>
       </div>
@@ -272,15 +260,13 @@
 
   <!-- ACTIVE RENTALS -->
   <div class="page" id="page-active-rentals">
-    <div class="card"><div class="card-header"><div class="card-title">Active Rentals</div><button class="btn btn-primary btn-sm" onclick="showPage('new-booking')">+ New Booking</button></div><div class="card-body" style="padding:0;overflow-x:auto;"><table class="data-table"><thead><tr><th>Customer</th><th>Trailer</th><th>Start</th><th>Return Due</th><th>Combo</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead><tbody id="activeBody"></tbody></table></div></div>
+    <div id="activeBody"></div>
   </div>
 
   <!-- MESSAGES -->
   <div class="page" id="page-messages">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-      <div class="card"><div class="card-header"><div class="card-title">Customer Templates</div></div><div class="card-body" id="tpl1"></div></div>
-      <div class="card"><div class="card-header"><div class="card-title">Safety & Decline Scripts</div></div><div class="card-body" id="tpl2"></div></div>
-    </div>
+    <div class="card"><div class="card-header"><div class="card-title">Customer Templates</div></div><div class="card-body" id="tpl1"></div></div>
+    <div class="card"><div class="card-header"><div class="card-title">Safety &amp; Decline Scripts</div></div><div class="card-body" id="tpl2"></div></div>
   </div>
 
   <!-- AGREEMENT -->
@@ -290,125 +276,97 @@
 
   <!-- PRICING -->
   <div class="page" id="page-pricing">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-      <div class="card"><div class="card-header"><div class="card-title">7x18 Utility Trailer 7K</div></div><div class="card-body"><div class="pricing-grid"><div class="pr-item"><div class="pr-period">Mon–Thu / day</div><div class="pr-price">$90</div></div><div class="pr-item"><div class="pr-period">Fri–Sun / day</div><div class="pr-price">$110</div></div><div class="pr-item"><div class="pr-period">Full Week (7 days)</div><div class="pr-price">$580</div></div><div class="pr-item"><div class="pr-period">Deposit</div><div class="pr-price">$200</div></div></div></div></div>
-      <div class="card"><div class="card-header"><div class="card-title">7x18 Car Hauler 7K</div></div><div class="card-body"><div class="pricing-grid"><div class="pr-item"><div class="pr-period">Mon–Thu / day</div><div class="pr-price">$100</div></div><div class="pr-item"><div class="pr-period">Fri–Sun / day</div><div class="pr-price">$120</div></div><div class="pr-item"><div class="pr-period">Full Week (7 days)</div><div class="pr-price">$640</div></div><div class="pr-item"><div class="pr-period">Deposit</div><div class="pr-price">$250</div></div></div></div></div>
-    </div>
-    <div class="card"><div class="card-header"><div class="card-title">Quick Price Calculator</div></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:end;" class="two-col"><div class="fg" style="margin:0;"><label class="fl">Trailer</label><select class="form-select" id="qc-tr" onchange="quickCalc()"><option value="utility">7x18 Utility 7K</option><option value="hauler">7x18 Car Hauler 7K</option></select></div><div class="fg" style="margin:0;"><label class="fl">Start Date</label><input class="fi" id="qc-sd" type="date" onchange="quickCalc()"></div><div class="fg" style="margin:0;"><label class="fl">End Date</label><input class="fi" id="qc-ed" type="date" onchange="quickCalc()"></div></div><div id="qcResult" style="margin-top:16px;"></div></div></div>
+    <div class="card"><div class="card-header"><div class="card-title">7x18 Utility Trailer 7K</div></div><div class="card-body"><div class="pricing-grid"><div class="pr-item"><div class="pr-period">Mon–Thu / day</div><div class="pr-price">$90</div></div><div class="pr-item"><div class="pr-period">Fri–Sun / day</div><div class="pr-price">$110</div></div><div class="pr-item"><div class="pr-period">Full Week (7 days)</div><div class="pr-price">$580</div></div><div class="pr-item"><div class="pr-period">Deposit</div><div class="pr-price">$200</div></div></div></div></div>
+    <div class="card"><div class="card-header"><div class="card-title">7x18 Car Hauler 7K</div></div><div class="card-body"><div class="pricing-grid"><div class="pr-item"><div class="pr-period">Mon–Thu / day</div><div class="pr-price">$100</div></div><div class="pr-item"><div class="pr-period">Fri–Sun / day</div><div class="pr-price">$120</div></div><div class="pr-item"><div class="pr-period">Full Week (7 days)</div><div class="pr-price">$640</div></div><div class="pr-item"><div class="pr-period">Deposit</div><div class="pr-price">$250</div></div></div></div></div>
+    <div class="card"><div class="card-header"><div class="card-title">Quick Price Calculator</div></div><div class="card-body">
+      <div class="fg"><label class="fl">Trailer</label><select class="form-select" id="qc-tr" onchange="quickCalc()"><option value="utility">7x18 Utility 7K</option><option value="hauler">7x18 Car Hauler 7K</option></select></div>
+      <div class="fr"><div class="fg" style="margin:0;"><label class="fl">Start Date</label><input class="fi" id="qc-sd" type="date" onchange="quickCalc()"></div><div class="fg" style="margin:0;"><label class="fl">End Date</label><input class="fi" id="qc-ed" type="date" onchange="quickCalc()"></div></div>
+      <div id="qcResult" style="margin-top:14px;"></div>
+    </div></div>
   </div>
 
   <!-- HISTORY -->
   <div class="page" id="page-history">
-    <div class="card"><div class="card-header"><div class="card-title">Rental History</div><div style="font-size:12px;color:var(--muted)" id="histStats">0 rentals</div></div><div class="card-body" style="padding:0;overflow-x:auto;"><table class="data-table"><thead><tr><th>#</th><th>Customer</th><th>Trailer</th><th>Dates</th><th>Days</th><th>Revenue</th><th>Source</th><th>Status</th></tr></thead><tbody id="histBody"></tbody></table></div></div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;font-family:'Oswald',sans-serif;letter-spacing:1px;" id="histStats"></div>
+    <div id="histBody"></div>
   </div>
 
   <!-- SETTINGS -->
   <div class="page" id="page-settings">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-      <div class="card"><div class="card-header"><div class="card-title">Business Info</div></div><div class="card-body">
-        <div class="fg"><label class="fl">Business Name</label><input class="fi" id="s-biz" value="Iron G Equipment Co. LLC"></div>
-        <div class="fg"><label class="fl">Owner Name</label><input class="fi" id="s-own" value="Frank Garza"></div>
-        <div class="fg"><label class="fl">Phone</label><input class="fi" id="s-ph" value="(405) 393-4161"></div>
-        <div class="fg"><label class="fl">Email</label><input class="fi" id="s-em" value="info@irongequipment.com"></div>
-        <div class="fg"><label class="fl">Storage Address</label><input class="fi" id="s-addr" value="16245 W HWY 66, Yukon OK 73099"></div>
-        <div style="height:1px;background:var(--border);margin:16px 0;"></div>
-        <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Payment Handles</div>
-        <div class="fg"><label class="fl">Cashapp Handle</label><input class="fi" id="s-ca" placeholder="$IronGEquipment"></div>
-        <div class="fg"><label class="fl">Venmo Handle</label><input class="fi" id="s-vm" placeholder="@IronG-Equipment"></div>
-        <div class="fg"><label class="fl">Square Payment Link</label><input class="fi" id="s-sq" placeholder="https://square.link/..."></div>
-        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
-      </div></div>
-      <div class="card"><div class="card-header"><div class="card-title">Fleet Status</div></div><div class="card-body" id="fleetSettings"></div></div>
+    <div class="card"><div class="card-header"><div class="card-title">Business Info</div></div><div class="card-body">
+      <div class="fg"><label class="fl">Business Name</label><input class="fi" id="s-biz" value="Iron G Equipment Co. LLC"></div>
+      <div class="fg"><label class="fl">Owner Name</label><input class="fi" id="s-own" value="Frank Garza"></div>
+      <div class="fg"><label class="fl">Phone</label><input class="fi" id="s-ph" value="(405) 393-4161"></div>
+      <div class="fg"><label class="fl">Email</label><input class="fi" id="s-em" value="info@irongequipment.com"></div>
+      <div class="fg"><label class="fl">Storage Address</label><input class="fi" id="s-addr" value="16245 W HWY 66, Yukon OK 73099"></div>
+      <div style="height:1px;background:#1a1a1a;margin:16px 0;"></div>
+      <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Payment Handles</div>
+      <div class="fg"><label class="fl">Cashapp Handle</label><input class="fi" id="s-ca" placeholder="$IronGEquipment"></div>
+      <div class="fg"><label class="fl">Venmo Handle</label><input class="fi" id="s-vm" placeholder="@IronG-Equipment"></div>
+      <div class="fg"><label class="fl">Square Payment Link</label><input class="fi" id="s-sq" placeholder="https://square.link/..."></div>
+      <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+    </div></div>
+
+    <div class="card"><div class="card-header"><div class="card-title">Fleet Status</div></div><div class="card-body" id="fleetSettings"></div></div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title">Backup &amp; Restore</div></div>
+      <div class="card-body">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Export all data to a JSON file for safekeeping, or restore from a previous backup.</p>
+        <div style="background:#1a1a1a;border:1px solid #2a2a2a;padding:10px 14px;margin-bottom:14px;border-radius:4px;">
+          <div id="storageUsage" style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:1px;">Calculating...</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;">
+          <button class="btn btn-primary" onclick="exportBackup()" style="flex:1;">⬇ Export Backup</button>
+          <button class="btn btn-ghost" onclick="importBackup()" style="flex:1;">⬆ Import Backup</button>
+        </div>
+        <div style="height:1px;background:#1a1a1a;margin:16px 0;"></div>
+        <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Danger Zone</div>
+        <button class="btn btn-danger" onclick="resetData()">🗑️ Remove All Data</button>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px;">Permanently removes all rentals, history, and settings. Cannot be undone.</div>
+      </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-      <!-- Backup & Restore -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">Backup & Restore</div></div>
-        <div class="card-body">
-          <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Export all data to a JSON file for safekeeping, or restore from a previous backup.</p>
-          <div style="background:var(--steel);border:1px solid var(--border);padding:10px 14px;margin-bottom:14px;border-radius:1px;">
-            <div id="storageUsage" style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:1px;">Calculating...</div>
-          </div>
-          <div style="display:flex;gap:8px;margin-bottom:16px;">
-            <button class="btn btn-primary" onclick="exportBackup()" style="flex:1;">⬇ Export Backup</button>
-            <button class="btn btn-ghost" onclick="importBackup()" style="flex:1;">⬆ Import Backup</button>
-          </div>
-          <div style="height:1px;background:var(--border);margin:16px 0;"></div>
-          <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Danger Zone</div>
-          <button class="btn btn-danger" onclick="resetData()">🗑️ Remove All Data</button>
-          <div style="font-size:11px;color:var(--muted);margin-top:8px;">Permanently removes all rentals, history, and settings. Cannot be undone.</div>
-        </div>
-      </div>
-      <!-- What's New -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">What's New — v1.0</div></div>
-        <div class="card-body">
-          <div style="font-size:13px;color:var(--text);line-height:2;">
-            <div style="margin-bottom:10px;font-family:'Oswald',sans-serif;color:var(--orange);letter-spacing:1px;">v1.0 — PWA Launch</div>
-            <div>✅ Install as app on phone or desktop</div>
-            <div>✅ Works offline after first load</div>
-            <div>✅ IndexedDB + localStorage dual storage</div>
-            <div>✅ Persistent storage protection</div>
-            <div>✅ Export &amp; import data backups</div>
-            <div>✅ Full booking workflow with gate system</div>
-            <div>✅ Combo lock manager</div>
-            <div>✅ Rental agreement generator</div>
-            <div>✅ SMS/copy message templates</div>
-          </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">What's New — v2.0</div></div>
+      <div class="card-body">
+        <div style="font-size:13px;color:var(--text);line-height:2;">
+          <div style="margin-bottom:10px;font-family:'Oswald',sans-serif;color:var(--primary);letter-spacing:1px;">v2.0 — Mobile-First Redesign</div>
+          <div>✅ Slide-out nav drawer (☰ bottom-left)</div>
+          <div>✅ New Booking FAB (+ bottom-right)</div>
+          <div>✅ Android back button navigation</div>
+          <div>✅ Card-based rental lists (no tables)</div>
+          <div>✅ No horizontal overflow on any screen</div>
+          <div>✅ Iron G blue color scheme</div>
         </div>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="two-col">
-      <!-- How to Install -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">How to Install</div></div>
-        <div class="card-body">
-          <div style="margin-bottom:16px;">
-            <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--orange);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">📱 Android (Chrome)</div>
-            <div style="font-size:13px;color:var(--text);line-height:2.2;">
-              1. Open in Chrome<br>
-              2. Tap the 3-dot menu (⋮)<br>
-              3. Tap <strong style="color:var(--white);">Add to Home Screen</strong><br>
-              4. Tap <strong style="color:var(--white);">Add</strong> — done!
-            </div>
-          </div>
-          <div style="height:1px;background:var(--border);margin:12px 0;"></div>
-          <div>
-            <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--orange);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">🍎 iPhone / iPad (Safari)</div>
-            <div style="font-size:13px;color:var(--text);line-height:2.2;">
-              1. Open in Safari<br>
-              2. Tap the Share button (□↑)<br>
-              3. Scroll and tap <strong style="color:var(--white);">Add to Home Screen</strong><br>
-              4. Tap <strong style="color:var(--white);">Add</strong> — done!
-            </div>
-          </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">How to Install</div></div>
+      <div class="card-body">
+        <div style="margin-bottom:16px;">
+          <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--primary);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">📱 Android (Chrome)</div>
+          <div style="font-size:13px;color:var(--text);line-height:2.2;">1. Open in Chrome<br>2. Tap the 3-dot menu (⋮)<br>3. Tap <strong style="color:var(--white);">Add to Home Screen</strong><br>4. Tap <strong style="color:var(--white);">Add</strong> — done!</div>
         </div>
-      </div>
-      <!-- How to Use -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">How to Use</div></div>
-        <div class="card-body">
-          <div style="font-size:13px;color:var(--text);line-height:2.4;">
-            <div><span style="color:var(--orange);font-family:'Oswald',sans-serif;">⚡ Dashboard</span> — Fleet overview, revenue, and activity feed</div>
-            <div><span style="color:var(--orange);font-family:'Oswald',sans-serif;">🚛 Fleet Status</span> — Combo codes, mark returns, manage trailers</div>
-            <div><span style="color:var(--orange);font-family:'Oswald',sans-serif;">➕ New Booking</span> — 4-step: Customer → Details → Review → Send</div>
-            <div><span style="color:var(--orange);font-family:'Oswald',sans-serif;">📋 Active Rentals</span> — All current rentals with overdue alerts</div>
-            <div><span style="color:var(--orange);font-family:'Oswald',sans-serif;">💬 Templates</span> — Copy/paste message scripts for customers</div>
-            <div><span style="color:var(--orange);font-family:'Oswald',sans-serif;">📄 Agreement</span> — Printable blank rental agreement</div>
-            <div><span style="color:var(--orange);font-family:'Oswald',sans-serif;">💰 Pricing</span> — Rate card + quick price calculator</div>
-            <div><span style="color:var(--orange);font-family:'Oswald',sans-serif;">📊 History</span> — Completed rentals and revenue tracking</div>
-          </div>
+        <div style="height:1px;background:#1a1a1a;margin:12px 0;"></div>
+        <div>
+          <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--primary);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">🍎 iPhone / iPad (Safari)</div>
+          <div style="font-size:13px;color:var(--text);line-height:2.2;">1. Open in Safari<br>2. Tap the Share button (□↑)<br>3. Scroll and tap <strong style="color:var(--white);">Add to Home Screen</strong><br>4. Tap <strong style="color:var(--white);">Add</strong> — done!</div>
         </div>
       </div>
     </div>
   </div>
 
-</div></div>
+</div><!-- /pages -->
 
-<button class="mobile-toggle" id="mobToggle">☰</button>
+<!-- HAMBURGER -->
+<button class="hamburger" id="hamburger" onclick="openDrawer()">☰</button>
 
-<script src="app.js?v=1.0"></script>
+<!-- FAB -->
+<button class="fab" onclick="fabNewBooking()">+</button>
+
+</div><!-- /app -->
+<script src="app.js?v=2.0"></script>
 </body>
 </html>

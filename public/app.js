@@ -5,6 +5,7 @@ var DB_STORE = 'state';
 var LS_KEY = 'ironG_v3';
 var commPref = 'text';
 var db = null;
+var currentPage = 'dashboard';
 
 function defaultState() {
   return {
@@ -25,7 +26,6 @@ function openDB() {
     req.onupgradeneeded = function(e) {
       var idb = e.target.result;
       if (!idb.objectStoreNames.contains(DB_STORE)) { idb.createObjectStore(DB_STORE); }
-      console.log('[IronG CC] Schema v' + SCHEMA_VER + ' — no migration needed');
     };
     req.onsuccess = function(e) { resolve(e.target.result); };
     req.onerror = function(e) { reject(e.target.error); };
@@ -69,27 +69,62 @@ function save() {
 function g(id) { return document.getElementById(id); }
 function gs(id, def) { var el = g(id); return el ? el.value.trim() || def : def; }
 
-// Clock
+// Clock (hidden element, kept for compat)
 setInterval(function() {
   var n = new Date(); var el = g('clock');
   if (el) el.textContent = n.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) + ' · ' + n.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
 }, 1000);
 
-// Mobile toggle
-document.addEventListener('DOMContentLoaded', function() {
-  var mob = g('mobToggle');
-  if (mob) mob.addEventListener('click', function() { g('sidebar').classList.toggle('open'); });
-});
+// ── DRAWER ──────────────────────────────────────────
+function openDrawer() {
+  g('drawer').classList.add('open');
+  g('drawerOverlay').classList.add('open');
+}
+function closeDrawer() {
+  g('drawer').classList.remove('open');
+  g('drawerOverlay').classList.remove('open');
+}
+function navTo(id) {
+  closeDrawer();
+  showPage(id);
+}
+function fabNewBooking() {
+  showPage('new-booking');
+}
 
-// Page routing
+// ── NAVIGATION ──────────────────────────────────────
 var titles = {dashboard:'Dashboard',fleet:'Fleet Status','new-booking':'New Booking','active-rentals':'Active Rentals',messages:'Message Templates',agreement:'Rental Agreement',pricing:'Pricing Reference',history:'Rental History',settings:'Settings'};
-function showPage(id) {
+
+function showPage(id, skipPush) {
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
-  document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active');});
   var pg = g('page-' + id); if (pg) pg.classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(function(n){ if ((n.getAttribute('onclick')||'').indexOf("'" + id + "'") > -1) n.classList.add('active'); });
+
   var tt = g('pageTitle'); if (tt) tt.textContent = titles[id] || id;
-  g('sidebar').classList.remove('open');
+  currentPage = id;
+
+  // back button
+  var bb = g('backBtn');
+  if (bb) {
+    if (id === 'dashboard') bb.classList.remove('visible');
+    else bb.classList.add('visible');
+  }
+
+  // highlight drawer item
+  document.querySelectorAll('.drawer-item').forEach(function(el) {
+    el.classList.remove('active');
+  });
+  var drawerMap = {'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals','new-booking':'dnav-new-booking','settings':'dnav-settings'};
+  var dnavId = drawerMap[id];
+  if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
+
+  // push history state
+  if (!skipPush) {
+    history.pushState({page: id}, '', '');
+  }
+
+  // scroll to top
+  window.scrollTo(0, 0);
+
   if (id === 'dashboard') drawDashboard();
   if (id === 'fleet') drawFleet();
   if (id === 'active-rentals') drawActiveRentals();
@@ -100,14 +135,26 @@ function showPage(id) {
   if (id === 'agreement') drawFullAgr();
 }
 
-// Comm preference
+function goBack() {
+  history.back();
+}
+
+window.addEventListener('popstate', function(e) {
+  var page = (e.state && e.state.page) ? e.state.page : 'dashboard';
+  if (!e.state) {
+    history.pushState({page: 'dashboard'}, '', '');
+  }
+  showPage(page, true);
+});
+
+// ── COMM PREFERENCE ─────────────────────────────────
 function setComm(val, el) {
   commPref = val;
   document.querySelectorAll('.comm-opt').forEach(function(b){b.classList.remove('active');});
   el.classList.add('active');
 }
 
-// Pricing
+// ── PRICING ─────────────────────────────────────────
 function calcPrice() {
   var tid = g('f-tr').value, sd = g('f-sd').value, ed = g('f-ed').value;
   var r = doCalc(tid, sd, ed);
@@ -165,7 +212,7 @@ function quickCalc() {
   div.innerHTML = r ? cpHtml(r) : '';
 }
 
-// Booking flow
+// ── BOOKING FLOW ─────────────────────────────────────
 function goStep(n) {
   if (n === 2) {
     if (!g('f-fn').value.trim() || !g('f-ph').value.trim()) { alert('Please enter customer name and phone.'); return; }
@@ -183,6 +230,7 @@ function goStep(n) {
     var fs = g('fs'+i);
     if (fs) { fs.classList.remove('active','done'); if (i<n) fs.classList.add('done'); if (i===n) fs.classList.add('active'); }
   }
+  window.scrollTo(0, 0);
 }
 
 function drawBookSummary() {
@@ -247,7 +295,7 @@ function confirmBooking() {
   goStep(4);
 }
 
-// Gate system
+// ── GATE SYSTEM ──────────────────────────────────────
 function setGate(n, gateState, statusText) {
   var el = g('gate'+n); if (!el) return;
   el.classList.remove('gate-active','gate-locked','gate-done');
@@ -300,7 +348,7 @@ function updatePaymentHandles() {
   var dsq = g('disp-square'); if (dsq) dsq.textContent = sq ? 'Link set' : '(not set)';
 }
 
-// Message generation
+// ── MESSAGE GENERATION ───────────────────────────────
 function buildMessages(bk, trailer) {
   var c = bk.c;
   var retDate = new Date(bk.ed + 'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
@@ -347,9 +395,7 @@ function buildMessages(bk, trailer) {
   var mp = g('msg-payment'); if (mp) mp.textContent = payLines;
 
   var confText = '✅ ' + c.fn + ', payment confirmed! Here are your pickup details:\n\n🚛 ' + bk.trailer + '\n📍 ' + addr + '\n🔐 Combo lock code: ' + bk.combo + '\n   (Spin to your code, pull handle down to open)\n📅 Return by: ' + retDate + '\n\n' + tips + '\n\n📸 When returning: lock the coupler and text me a photo.\n\nQuestions? Call/text Frank: ' + phDot + '\n\nThanks for choosing Iron G! 🤙';
-
   var confEmail = 'Subject: Iron G Equipment Co. — Pickup Instructions #' + bk.id + '\n\nHi ' + c.fn + ',\n\nPayment received — you\'re all set! Here are your pickup details:\n\nTRAILER: ' + bk.trailer + '\nPICKUP: ' + addr + '\nCOMBO CODE: ' + bk.combo + '\n(Spin dials to ' + bk.combo + ', pull shackle down to open)\n\nRETURN DUE: ' + retDate + '\n\n' + tips + '\n\nRETURN INSTRUCTIONS:\n• Return to same storage space\n• Lock the coupler\n• Text a photo of locked coupler to ' + ph + '\n• Deposit released within 3 business days\n\nQuestions? ' + ph + ' | ' + em + '\n\nThank you!\nFrank Garza — Owner\n' + biz;
-
   var remText = 'Hey ' + c.fn + '! Quick reminder from Iron G — your trailer is due back TOMORROW.\n\n📍 Return to: ' + addr + '\n🔐 Lock the coupler and text me a return photo\n📅 Due: ' + retDate + '\n\nNeed more time? Text me ASAP.\n\n— Frank ' + phDot + ' · Iron G Equipment Co.';
   var mr = g('msg-reminder'); if (mr) mr.textContent = remText;
 
@@ -524,7 +570,7 @@ function updateStorageUsage() {
   } else { div.innerHTML = '~' + Math.round(lsBytes/1024) + ' KB in localStorage'; }
 }
 
-// Draw functions
+// ── DRAW FUNCTIONS ───────────────────────────────────
 function drawFleet() {
   var fc = g('fleetCards');
   if (fc) {
@@ -545,9 +591,10 @@ function drawFleet() {
     var ch = '';
     state.fleet.forEach(function(t){
       var digs = ''; for (var i = 0; i < t.combo.length; i++) digs += '<div class="combo-dig">' + t.combo[i] + '</div>';
-      ch += '<div><div style="font-family:Oswald,sans-serif;font-size:14px;font-weight:600;color:var(--white);margin-bottom:10px;text-transform:uppercase;">' + t.name + '</div>' +
+      ch += '<div style="margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid #1a1a1a;">' +
+        '<div style="font-family:Oswald,sans-serif;font-size:14px;font-weight:600;color:var(--white);margin-bottom:10px;text-transform:uppercase;">' + t.name + '</div>' +
         '<div class="combo-disp">' + digs + '</div>' +
-        '<div style="display:flex;gap:8px;margin-top:10px;"><input class="fi" id="ci-' + t.id + '" type="text" maxlength="4" placeholder="0000" style="width:90px;font-family:Oswald,sans-serif;font-size:22px;font-weight:700;text-align:center;letter-spacing:4px;">' +
+        '<div style="display:flex;gap:8px;margin-top:10px;align-items:center;"><input class="fi" id="ci-' + t.id + '" type="text" maxlength="4" placeholder="0000" style="width:90px;font-family:Oswald,sans-serif;font-size:22px;font-weight:700;text-align:center;letter-spacing:4px;">' +
         '<button class="btn btn-ghost btn-sm" onclick="setComboFleet(\'' + t.id + '\')">Set</button>' +
         '<button class="btn btn-ghost btn-sm" onclick="randComboFleet(\'' + t.id + '\')">🎲</button></div></div>';
     });
@@ -556,42 +603,65 @@ function drawFleet() {
 }
 
 function drawActiveRentals() {
-  var tb = g('activeBody'); if (!tb) return;
+  var container = g('activeBody'); if (!container) return;
   var active = state.rentals.filter(function(r){return r.status==='active';});
-  if (!active.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">No active rentals.</td></tr>'; return; }
-  var h = '';
+  if (!active.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No active rentals.<br><br><button class="btn btn-primary" onclick="showPage(\'new-booking\')">+ New Booking</button></div>';
+    return;
+  }
+  var h = '<div style="font-family:Oswald,sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + active.length + ' active rental' + (active.length>1?'s':'') + '</div>';
   active.forEach(function(r){
     var dl = Math.ceil((new Date(r.ed+'T12:00:00')-new Date())/86400000);
     var bc = dl<=0?'b-overdue':dl===1?'b-pending':'b-rented';
     var bt = dl<=0?'OVERDUE':dl===1?'DUE TOMORROW':r.days+'-DAY RENTAL';
-    h += '<tr><td class="tn">' + r.c.fn + ' ' + r.c.ln + '<div style="font-size:12px;color:var(--muted);">' + r.c.ph + '</div></td>' +
-      '<td>' + r.trailer + '</td><td>' + r.sd + '</td><td>' + r.ed + '</td>' +
-      '<td class="tm">' + r.combo + '</td>' +
-      '<td class="tm">$' + r.total + '<div style="font-size:11px;color:var(--muted);">+$' + r.dep + ' dep.</div></td>' +
-      '<td><span class="badge ' + bc + '">' + bt + '</span></td>' +
-      '<td><button class="btn btn-success btn-sm" onclick="markReturned(' + r.id + ')">✓ Return</button></td></tr>';
+    h += '<div class="rental-card">' +
+      '<div class="rental-card-header">' +
+        '<div><div class="rental-name">' + r.c.fn + ' ' + r.c.ln + '</div><div class="rental-phone">' + r.c.ph + '</div></div>' +
+        '<span class="badge ' + bc + '">' + bt + '</span>' +
+      '</div>' +
+      '<div class="rental-field"><span class="rental-label">Trailer</span><span class="rental-value">' + r.trailer + '</span></div>' +
+      '<div class="rental-field"><span class="rental-label">Start</span><span class="rental-value">' + r.sd + '</span></div>' +
+      '<div class="rental-field"><span class="rental-label">Return Due</span><span class="rental-value">' + r.ed + '</span></div>' +
+      '<div class="rental-field"><span class="rental-label">Combo</span><span class="rental-value accent">' + r.combo + '</span></div>' +
+      '<div class="rental-field"><span class="rental-label">Amount</span><span class="rental-value">$' + r.total + ' <span style="color:var(--muted);font-weight:400;">+$' + r.dep + ' dep</span></span></div>' +
+      '<div class="rental-actions"><button class="btn btn-success btn-sm" onclick="markReturned(' + r.id + ')">✓ Mark Returned</button></div>' +
+      '</div>';
   });
-  tb.innerHTML = h;
+  container.innerHTML = h;
 }
 
 function drawHistory() {
-  var tb = g('histBody'); if (!tb) return;
+  var container = g('histBody'); if (!container) return;
   var all = state.done.slice().reverse();
-  if (!all.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">No completed rentals yet.</td></tr>'; return; }
+  var hs = g('histStats');
+  if (!all.length) {
+    if (hs) hs.textContent = '';
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No completed rentals yet.</div>';
+    return;
+  }
   var rev = 0; all.forEach(function(r){rev += r.rental + (r.wt||0);});
-  var hs = g('histStats'); if (hs) hs.textContent = all.length + ' rentals · $' + rev + ' total revenue';
+  if (hs) hs.textContent = all.length + ' rentals · $' + rev + ' total revenue';
   var h = '';
   all.forEach(function(r){
-    h += '<tr><td class="tm">#' + r.id + '</td><td class="tn">' + r.c.fn + ' ' + r.c.ln + '</td><td>' + r.trailer + '</td><td>' + r.sd + ' to ' + r.ed + '</td><td>' + r.days + '</td><td class="tm">$' + r.rental + '</td><td style="font-size:12px;color:var(--muted);">' + (r.src||'—') + '</td><td><span class="badge b-returned">Returned</span></td></tr>';
+    h += '<div class="rental-card">' +
+      '<div class="rental-card-header">' +
+        '<div><div class="rental-name">' + r.c.fn + ' ' + r.c.ln + '</div><div class="rental-phone">#' + r.id + (r.src ? ' · ' + r.src : '') + '</div></div>' +
+        '<span class="badge b-returned">Returned</span>' +
+      '</div>' +
+      '<div class="rental-field"><span class="rental-label">Trailer</span><span class="rental-value">' + r.trailer + '</span></div>' +
+      '<div class="rental-field"><span class="rental-label">Dates</span><span class="rental-value">' + r.sd + ' → ' + r.ed + '</span></div>' +
+      '<div class="rental-field"><span class="rental-label">Duration</span><span class="rental-value">' + r.days + ' day' + (r.days>1?'s':'') + '</span></div>' +
+      '<div class="rental-field"><span class="rental-label">Revenue</span><span class="rental-value accent">$' + r.rental + '</span></div>' +
+      '</div>';
   });
-  tb.innerHTML = h;
+  container.innerHTML = h;
 }
 
 function drawAvail() {
   var div = g('availPanel'); if (!div) return;
   var h = '';
   state.fleet.forEach(function(t){
-    h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);">' +
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #1a1a1a;">' +
       '<div><div style="font-weight:600;color:var(--white);font-size:14px;">' + t.name + '</div>' +
       '<div style="font-size:12px;color:var(--muted);margin-top:2px;">' + (t.status==='rented'?'Out — returns '+t.returnDate:'Open & ready') + '</div></div>' +
       '<span class="badge b-' + t.status + '">' + (t.status==='available'?'✓ Open':'⚡ Out') + '</span></div>';
@@ -603,7 +673,7 @@ function drawFleetSettings() {
   var div = g('fleetSettings'); if (!div) return;
   var h = '';
   state.fleet.forEach(function(t){
-    h += '<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border);">' +
+    h += '<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #1a1a1a;">' +
       '<div style="font-family:Oswald,sans-serif;font-size:14px;font-weight:600;color:var(--white);margin-bottom:6px;text-transform:uppercase;">' + t.name + '</div>' +
       '<div style="font-size:13px;color:var(--muted);">Status: <span class="badge b-' + t.status + '" style="margin-left:6px;">' + t.status + '</span></div></div>';
   });
@@ -661,7 +731,7 @@ function drawFullAgr() {
     '<div style="margin-top:12px;font-size:10px;color:#aaa;text-align:center;">' + biz + ' · Yukon, OK · ' + ph + ' · ' + em + '</div>';
 }
 
-// Copy helpers
+// ── COPY / SMS HELPERS ───────────────────────────────
 function copyEl(id) {
   var el = g(id); if (!el) return;
   var text = el.innerText || el.textContent;
@@ -677,13 +747,14 @@ function openSMS(id) {
   window.location.href = 'sms:' + ph + '?body=' + encodeURIComponent(el.textContent);
 }
 
+// ── DASHBOARD ────────────────────────────────────────
 function drawDashboard() {
   updateStats();
   var df = g('dashFleet');
   if (df) {
     var h = '';
     state.fleet.forEach(function(t){
-      h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">' +
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #1a1a1a;">' +
         '<div><div style="font-weight:600;color:var(--white);font-size:14px;">' + t.name + '</div>' +
         '<div style="font-size:12px;color:var(--muted);margin-top:2px;">' + (t.status==='rented'?'Out to '+t.renter+' — due '+t.returnDate:'Ready to rent') + '</div></div>' +
         '<span class="badge b-' + t.status + '">' + (t.status==='available'?'✓ Available':'⚡ Out') + '</span></div>';
@@ -692,10 +763,10 @@ function drawDashboard() {
   }
   var da = g('dashActivity');
   if (da) {
-    var acts = state.activity.slice(-8).reverse(), ah = '';
-    var colorMap = {orange:'var(--orange)',green:'var(--green)',yellow:'var(--yellow)',gray:'var(--border)'};
+    var acts = state.activity.slice(-6).reverse(), ah = '';
+    var colorMap = {orange:'var(--primary)',green:'var(--success)',yellow:'var(--warning)',gray:'#3a3a3a'};
     acts.forEach(function(a){
-      var c = colorMap[a.color] || 'var(--border)';
+      var c = colorMap[a.color] || '#3a3a3a';
       ah += '<div class="act-item"><div style="width:8px;height:8px;border-radius:50%;background:' + c + ';flex-shrink:0;margin-top:5px;"></div><div><div style="font-size:13px;color:var(--text);">' + a.text + '</div><div style="font-size:11px;color:var(--muted);">' + a.time + '</div></div></div>';
     });
     da.innerHTML = ah || '<div style="color:var(--muted);font-size:13px;">No activity yet.</div>';
@@ -709,15 +780,15 @@ function drawDashboard() {
       var dl = Math.ceil((new Date(r.ed+'T12:00:00')-new Date())/86400000);
       var bc = dl<=0?'b-overdue':dl===1?'b-pending':'b-available';
       var bt = dl<=0?'OVERDUE':dl===1?'DUE TOMORROW':r.days+'-DAY RENTAL';
-      rh += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);">' +
-        '<div><div style="font-weight:600;color:var(--white);">' + r.c.fn + ' ' + r.c.ln + '</div><div style="font-size:12px;color:var(--muted);">' + r.trailer + ' · Return: ' + r.ed + '</div></div>' +
-        '<div style="display:flex;gap:8px;align-items:center;"><span class="badge ' + bc + '">' + bt + '</span><button class="btn btn-success btn-sm" onclick="markReturned(' + r.id + ')">Return</button></div></div>';
+      rh += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #1a1a1a;gap:8px;">' +
+        '<div style="min-width:0;"><div style="font-weight:600;color:var(--white);font-size:14px;">' + r.c.fn + ' ' + r.c.ln + '</div><div style="font-size:12px;color:var(--muted);">' + r.trailer + ' · Return: ' + r.ed + '</div></div>' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-shrink:0;"><span class="badge ' + bc + '">' + bt + '</span><button class="btn btn-success btn-sm" onclick="markReturned(' + r.id + ')">Return</button></div></div>';
     });
     dr.innerHTML = rh;
   }
 }
 
-// Init
+// ── INIT ─────────────────────────────────────────────
 async function initApp() {
   if (navigator.storage && navigator.storage.persist) {
     navigator.storage.persist().then(function(granted) {
@@ -742,18 +813,15 @@ async function initApp() {
   if (lsData) {
     state = lsData;
     idbPut('state', state).catch(function(){});
-    console.log('[IronG CC] Seeding skipped — existing data found');
     console.log('[IronG CC] Init complete — loaded ' + (state.rentals.length + state.done.length) + ' items');
   } else if (idbData) {
     state = idbData;
     try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e) {}
-    console.log('[IronG CC] Seeding skipped — existing data found');
     console.log('[IronG CC] Init complete — loaded ' + (state.rentals.length + state.done.length) + ' items');
   } else {
     state = defaultState();
     console.log('[IronG CC] First install — seeding defaults');
     save();
-    console.log('[IronG CC] Init complete — loaded 0 items');
   }
 
   if (state.settings) {
@@ -764,7 +832,13 @@ async function initApp() {
   var today = new Date().toISOString().split('T')[0];
   ['f-sd','f-ed','qc-sd','qc-ed'].forEach(function(id){ var el = g(id); if (el) el.setAttribute('min',today); });
 
-  updateStats(); drawDashboard(); drawFleet();
+  // seed pushState so Android back never exits the app on first press
+  history.replaceState({page: 'dashboard'}, '', '');
+
+  updateStats();
+  drawDashboard();
+  drawFleet();
+  showPage('dashboard', true);
 }
 
 initApp();
