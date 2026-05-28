@@ -1,4 +1,4 @@
-var VER = '3.0';
+var VER = '4.0';
 var SCHEMA_VER = 1;
 var DB_NAME = 'ironGCC';
 var DB_STORE = 'state';
@@ -93,7 +93,7 @@ function fabNewBooking() {
 }
 
 // ── NAVIGATION ──────────────────────────────────────
-var titles = {dashboard:'Dashboard',fleet:'Fleet Status','new-booking':'New Booking','active-rentals':'Active Rentals',messages:'Message Templates',agreement:'Rental Agreement',pricing:'Pricing Reference',history:'Rental History',settings:'Settings'};
+var titles = {dashboard:'Dashboard',fleet:'Fleet Status','new-booking':'New Booking','active-rentals':'Active Rentals',messages:'Message Templates',agreement:'Rental Agreement',pricing:'Pricing Reference',history:'Rental History',settings:'Settings',notifications:'Notifications'};
 
 function showPage(id, skipPush) {
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
@@ -113,7 +113,7 @@ function showPage(id, skipPush) {
   document.querySelectorAll('.drawer-item').forEach(function(el) {
     el.classList.remove('active');
   });
-  var drawerMap = {'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals','new-booking':'dnav-new-booking','settings':'dnav-settings'};
+  var drawerMap = {'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals','new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications'};
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
 
@@ -133,6 +133,7 @@ function showPage(id, skipPush) {
   if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); }
   if (id === 'messages') drawMessages();
   if (id === 'agreement') drawFullAgr();
+  if (id === 'notifications') drawNotifications();
 }
 
 function goBack() {
@@ -839,6 +840,122 @@ async function initApp() {
   drawDashboard();
   drawFleet();
   showPage('dashboard', true);
+
+  fetchNotifications();
+  setInterval(fetchNotifications, 60000);
+}
+
+// ── NOTIFICATIONS ─────────────────────────────────────
+var notifications = [];
+var notifBadgeCount = 0;
+
+async function fetchNotifications() {
+  try {
+    var res = await fetch('/notifications?handled=false');
+    if (!res.ok) return;
+    notifications = await res.json();
+    notifBadgeCount = Array.isArray(notifications) ? notifications.length : 0;
+    updateNotifBadge();
+    if (currentPage === 'notifications') drawNotifications();
+  } catch(e) {
+    console.error('[IronG] fetchNotifications error:', e);
+  }
+}
+
+function updateNotifBadge() {
+  var hb = g('notifHeaderBadge');
+  var db = g('drawerNotifBadge');
+  if (hb) { hb.textContent = notifBadgeCount; hb.style.display = notifBadgeCount > 0 ? 'inline-flex' : 'none'; }
+  if (db) { db.textContent = notifBadgeCount; db.style.display = notifBadgeCount > 0 ? 'inline-flex' : 'none'; }
+}
+
+function relativeTime(iso) {
+  if (!iso) return '—';
+  var diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + ' min ago';
+  var hrs = Math.floor(diff / 3600);
+  if (diff < 86400) return hrs + ' hr' + (hrs > 1 ? 's' : '') + ' ago';
+  var days = Math.floor(diff / 86400);
+  return days + ' day' + (days > 1 ? 's' : '') + ' ago';
+}
+
+function toggleNotifDetail(id) {
+  var el = g('nd-' + id);
+  var btn = g('ndb-' + id);
+  if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (btn) btn.textContent = open ? 'View Details' : 'Hide Details';
+}
+
+async function markHandled(key, id) {
+  try {
+    var res = await fetch('/notifications/handled', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: key }),
+    });
+    if (!res.ok) { console.error('[IronG] markHandled failed'); return; }
+    notifications = notifications.filter(function(n) { return n.id !== id; });
+    notifBadgeCount = notifications.length;
+    updateNotifBadge();
+    drawNotifications();
+  } catch(e) {
+    console.error('[IronG] markHandled error:', e);
+  }
+}
+
+function notifDetailRow(label, val) {
+  return '<div class="notif-field"><span class="notif-label">' + label + '</span><span class="notif-value">' + (val || '—') + '</span></div>';
+}
+
+function drawNotifications() {
+  var container = g('notifBody');
+  if (!container) return;
+  if (!notifications.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No new requests. You\'re all caught up.</div>';
+    return;
+  }
+  var h = '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + notifications.length + ' unhandled request' + (notifications.length > 1 ? 's' : '') + '</div>';
+  notifications.forEach(function(n) {
+    var isRental = n.type === 'rental';
+    h += '<div class="notif-card">' +
+      '<div class="notif-card-header">' +
+        '<span class="notif-type-badge ' + (isRental ? 'ntb-rental' : 'ntb-info') + '">' + (isRental ? 'RENTAL' : 'INFO') + '</span>' +
+        '<div class="notif-name">' + (n.name || '—') + '</div>' +
+        '<div class="notif-meta">' + relativeTime(n.receivedAt) + '</div>' +
+      '</div>' +
+      '<div class="notif-quick">' +
+        '<div class="notif-field"><span class="notif-label">Phone</span><a class="notif-phone" href="tel:' + (n.phone || '').replace(/\D/g, '') + '">' + (n.phone || '—') + '</a></div>' +
+        '<div class="notif-field"><span class="notif-label">Trailer</span><span class="notif-value">' + (n.trailer || '—') + '</span></div>' +
+        '<div class="notif-field"><span class="notif-label">Start Date</span><span class="notif-value">' + (n.startDate || '—') + '</span></div>' +
+      '</div>' +
+      '<div class="notif-detail" id="nd-' + n.id + '" style="display:none;">' +
+        '<div style="height:1px;background:#1a1a1a;margin:12px 0;"></div>' +
+        notifDetailRow('Name', n.name) +
+        notifDetailRow('Phone', n.phone) +
+        notifDetailRow('Email', n.email) +
+        notifDetailRow('City', n.city) +
+        notifDetailRow('Trailer', n.trailer) +
+        notifDetailRow('Start Date', n.startDate) +
+        notifDetailRow('Duration', n.duration) +
+        notifDetailRow('Tow Vehicle', n.towVehicle) +
+        notifDetailRow('Hauling', n.hauling) +
+        notifDetailRow('Referral', n.referral) +
+        notifDetailRow('Notes', n.notes) +
+        notifDetailRow('Source', n.source) +
+        notifDetailRow('Submitted', n.timestamp) +
+        notifDetailRow('Received', n.receivedAt) +
+        notifDetailRow('Email Sent', n.emailSent ? 'Yes' : 'No') +
+      '</div>' +
+      '<div class="notif-actions">' +
+        '<button class="btn btn-ghost btn-sm" id="ndb-' + n.id + '" onclick="toggleNotifDetail(' + n.id + ')">View Details</button>' +
+        '<button class="btn btn-success btn-sm" onclick="markHandled(\'submission:' + n.id + '\',' + n.id + ')">✓ Mark Handled</button>' +
+      '</div>' +
+    '</div>';
+  });
+  container.innerHTML = h;
 }
 
 initApp();

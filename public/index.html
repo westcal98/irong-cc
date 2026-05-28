@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=2.0">
+<link rel="stylesheet" href="styles.css?v=3.0">
 </head>
 <body>
 <div class="app">
@@ -20,6 +20,10 @@
 <header class="header" id="appHeader">
   <button class="back-btn" id="backBtn" onclick="goBack()">&#8592;</button>
   <div class="header-wordmark">Iron <span>G</span></div>
+  <button class="notif-btn" onclick="navTo('notifications')" aria-label="Notifications">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    <span class="notif-header-badge" id="notifHeaderBadge" style="display:none">0</span>
+  </button>
 </header>
 
 <!-- DRAWER OVERLAY -->
@@ -36,6 +40,7 @@
     <div class="drawer-item" id="dnav-fleet" onclick="navTo('fleet')"><span class="drawer-icon">🚛</span>Fleet</div>
     <div class="drawer-item" id="dnav-active-rentals" onclick="navTo('active-rentals')"><span class="drawer-icon">📋</span>Bookings</div>
     <div class="drawer-item" id="dnav-new-booking" onclick="navTo('new-booking')"><span class="drawer-icon">📝</span>Workflow</div>
+    <div class="drawer-item" id="dnav-notifications" onclick="navTo('notifications')"><span class="drawer-icon">🔔</span>Notifications<span class="drawer-notif-badge" id="drawerNotifBadge" style="display:none">0</span></div>
     <div class="drawer-item" id="dnav-settings" onclick="navTo('settings')"><span class="drawer-icon">⚙️</span>Settings</div>
   </div>
   <div class="drawer-footer">Iron G Equipment Co. LLC<br><span style="color:var(--primary)">(405) 393-4161</span></div>
@@ -291,6 +296,11 @@
     <div id="histBody"></div>
   </div>
 
+  <!-- NOTIFICATIONS -->
+  <div class="page" id="page-notifications">
+    <div id="notifBody"></div>
+  </div>
+
   <!-- SETTINGS -->
   <div class="page" id="page-settings">
     <div class="card"><div class="card-header"><div class="card-title">Business Info</div></div><div class="card-body">
@@ -367,6 +377,6 @@
 <button class="fab" onclick="fabNewBooking()">+</button>
 
 </div><!-- /app -->
-<script src="app.js?v=2.0"></script>
+<script src="app.js?v=3.0"></script>
 </body>
 </html>

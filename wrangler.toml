@@ -1,5 +1,11 @@
 name = "irong-cc"
+main = "src/worker.js"
 compatibility_date = "2024-09-23"
 
 [assets]
 directory = "public"
+binding = "ASSETS"
+
+[[kv_namespaces]]
+binding = "IRONG_KV"
+id = "0a20708bb3334ce2b737b50e6e5ac0f0"

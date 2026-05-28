@@ -224,3 +224,29 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 /* ── ANIMATIONS ── */
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .fade-in{animation:fadeIn .3s ease;}
+
+/* ── NOTIFICATION BELL (header) ── */
+.notif-btn{position:absolute;right:12px;background:none;border:none;cursor:pointer;padding:6px 10px;display:flex;align-items:center;gap:4px;color:var(--muted);line-height:1;}
+.notif-btn:hover{color:var(--white);}
+.notif-header-badge{background:#C4611A;color:#fff;font-family:'Oswald',sans-serif;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;line-height:1;}
+
+/* ── NOTIFICATION DRAWER BADGE ── */
+.drawer-notif-badge{background:#C4611A;color:#fff;font-family:'Oswald',sans-serif;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;margin-left:auto;line-height:1;}
+
+/* ── NOTIFICATION CARDS ── */
+.notif-card{background:var(--surface);border:1px solid #1a1a1a;border-radius:6px;padding:14px;margin-bottom:12px;}
+.notif-card-header{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
+.notif-type-badge{font-family:'Oswald',sans-serif;font-size:10px;font-weight:700;letter-spacing:1px;padding:3px 8px;border-radius:3px;text-transform:uppercase;flex-shrink:0;}
+.ntb-rental{background:rgba(91,158,201,.2);color:#5B9EC9;border:1px solid rgba(91,158,201,.4);}
+.ntb-info{background:rgba(154,154,154,.12);color:var(--muted);border:1px solid #3a3a3a;}
+.notif-name{font-family:'Oswald',sans-serif;font-size:18px;font-weight:700;color:var(--white);flex:1;min-width:0;}
+.notif-meta{font-size:11px;color:var(--muted);flex-shrink:0;}
+.notif-quick{margin-bottom:4px;}
+.notif-field{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #1a1a1a;font-size:13px;gap:8px;}
+.notif-field:last-child{border-bottom:none;}
+.notif-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-family:'Oswald',sans-serif;flex-shrink:0;}
+.notif-value{color:var(--white);font-weight:600;text-align:right;word-break:break-word;}
+.notif-phone{color:#5B9EC9;font-weight:700;font-family:'Oswald',sans-serif;letter-spacing:1px;text-decoration:none;font-size:14px;}
+.notif-phone:hover{color:var(--primary-hover);}
+.notif-detail .notif-field{font-size:12px;}
+.notif-actions{display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #1a1a1a;flex-wrap:wrap;justify-content:space-between;}
