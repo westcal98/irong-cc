@@ -2,6 +2,9 @@ name = "irong-cc"
 main = "src/worker.js"
 compatibility_date = "2024-09-23"
 
+[vars]
+VAPID_PUBLIC_KEY = "BL298TvMWFHIxNCPb1PEN5Ir8CXj0JVoqhuivoQqjbIxBLoyM_kezlWkZvQv1UtPHNiiBlQAdTyvOnPkYf4BsiY"
+
 [assets]
 directory = "public"
 binding = "ASSETS"

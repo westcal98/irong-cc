@@ -1,4 +1,4 @@
-var VER = '4.0';
+var VER = '5.0';
 var SCHEMA_VER = 1;
 var DB_NAME = 'ironGCC';
 var DB_STORE = 'state';
@@ -129,7 +129,7 @@ function showPage(id, skipPush) {
   if (id === 'fleet') drawFleet();
   if (id === 'active-rentals') drawActiveRentals();
   if (id === 'history') drawHistory();
-  if (id === 'new-booking') drawAvail();
+  if (id === 'new-booking') { drawAvail(); if (window._pendingBooking) populatePendingBooking(); }
   if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); }
   if (id === 'messages') drawMessages();
   if (id === 'agreement') drawFullAgr();
@@ -286,6 +286,10 @@ function confirmBooking() {
   t.status = 'rented'; t.renter = c.fn + ' ' + c.ln; t.returnDate = r.ed;
   save(); buildMessages(bk, t); updateStats();
   addAct('Booking: ' + c.fn + ' ' + c.ln + ' — ' + t.name, 'orange');
+  if (window._pendingBookingNotifKey) {
+    var pnk = window._pendingBookingNotifKey; window._pendingBookingNotifKey = null;
+    markHandled(pnk.key, pnk.id);
+  }
   setGate(0,'active','Send before agreement');
   setGate(1,'locked','Locked — send quote first');
   setGate(2,'locked','Locked — sign agreement first');
@@ -843,6 +847,8 @@ async function initApp() {
 
   fetchNotifications();
   setInterval(fetchNotifications, 60000);
+
+  initPushNotifications();
 }
 
 // ── NOTIFICATIONS ─────────────────────────────────────
@@ -951,11 +957,160 @@ function drawNotifications() {
       '</div>' +
       '<div class="notif-actions">' +
         '<button class="btn btn-ghost btn-sm" id="ndb-' + n.id + '" onclick="toggleNotifDetail(' + n.id + ')">View Details</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="createBookingFromNotif(' + n.id + ')">📋 Create Booking</button>' +
         '<button class="btn btn-success btn-sm" onclick="markHandled(\'submission:' + n.id + '\',' + n.id + ')">✓ Mark Handled</button>' +
       '</div>' +
     '</div>';
   });
   container.innerHTML = h;
+}
+
+// ── WEB PUSH SUBSCRIPTION ────────────────────────────
+var _vapidPublicKey = null;
+
+async function initPushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    var perm = Notification.permission;
+    if (perm === 'denied') return;
+
+    var reg = await navigator.serviceWorker.ready;
+
+    if (perm === 'granted') {
+      await subscribeAndPost(reg);
+      updatePushPrompt();
+      return;
+    }
+
+    // permission is 'default' — show prompt
+    updatePushPrompt();
+  } catch(e) {
+    console.error('[IronG] Push init error:', e);
+  }
+}
+
+async function getVapidKey() {
+  if (_vapidPublicKey) return _vapidPublicKey;
+  try {
+    var res = await fetch('/vapid-public-key');
+    var data = await res.json();
+    _vapidPublicKey = data.publicKey;
+  } catch(e) {
+    console.error('[IronG] Failed to fetch VAPID key:', e);
+  }
+  return _vapidPublicKey;
+}
+
+async function subscribeAndPost(reg) {
+  var pubKey = await getVapidKey();
+  if (!pubKey) return;
+  var sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlB64ToUint8Array(pubKey),
+  });
+  await fetch('/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(sub.toJSON()),
+  });
+  try { localStorage.setItem('ironG_pushSub', '1'); } catch(e) {}
+}
+
+async function enablePushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    var perm = await Notification.requestPermission();
+    if (perm !== 'granted') { updatePushPrompt(); return; }
+    var reg = await navigator.serviceWorker.ready;
+    await subscribeAndPost(reg);
+    updatePushPrompt();
+  } catch(e) {
+    console.error('[IronG] Enable push error:', e);
+  }
+}
+
+function updatePushPrompt() {
+  var banner = g('pushPromptBanner');
+  if (!banner) return;
+  var perm = Notification.permission;
+  banner.style.display = (perm === 'default' && 'PushManager' in window) ? 'block' : 'none';
+}
+
+function urlB64ToUint8Array(base64String) {
+  var padding = '='.repeat((4 - base64String.length % 4) % 4);
+  var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  var rawData = atob(base64);
+  var outputArray = new Uint8Array(rawData.length);
+  for (var i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+// ── CREATE BOOKING FROM NOTIFICATION ─────────────────
+function createBookingFromNotif(id) {
+  var n = null;
+  for (var i = 0; i < notifications.length; i++) {
+    if (notifications[i].id === id) { n = notifications[i]; break; }
+  }
+  if (!n) return;
+
+  var nameParts = (n.name || '').trim().split(/\s+/);
+  var trailerMap = { 'utility trailer': 'utility', 'car hauler': 'hauler', 'hauler': 'hauler', 'utility': 'utility' };
+  var trailerId = '';
+  if (n.trailer) {
+    var tl = n.trailer.toLowerCase();
+    if (tl.includes('utility')) trailerId = 'utility';
+    else if (tl.includes('hauler')) trailerId = 'hauler';
+  }
+
+  window._pendingBooking = {
+    fn: nameParts[0] || '',
+    ln: nameParts.slice(1).join(' ') || '',
+    ph: n.phone || '',
+    em: n.email || '',
+    cy: n.city || '',
+    vh: n.towVehicle || '',
+    trailerId: trailerId,
+    startDate: n.startDate || '',
+    ld: n.hauling || '',
+    src: n.referral || '',
+    nt: n.notes || '',
+  };
+  window._pendingBookingNotifKey = { key: 'submission:' + n.id, id: n.id };
+
+  showPage('new-booking');
+}
+
+function populatePendingBooking() {
+  var pb = window._pendingBooking;
+  if (!pb) return;
+  window._pendingBooking = null;
+
+  newBooking();
+
+  var set = function(id, val) { var el = g(id); if (el && val) el.value = val; };
+  set('f-fn', pb.fn);
+  set('f-ln', pb.ln);
+  set('f-ph', pb.ph);
+  set('f-em', pb.em);
+  set('f-cy', pb.cy);
+  set('f-vh', pb.vh);
+  set('f-nt', pb.nt);
+  set('f-ld', pb.ld);
+  if (pb.startDate) set('f-sd', pb.startDate);
+  if (pb.trailerId) {
+    set('f-tr', pb.trailerId);
+    calcPrice();
+  }
+  if (pb.src) {
+    var src = g('f-src');
+    if (src) {
+      for (var i = 0; i < src.options.length; i++) {
+        if (src.options[i].text === pb.src || src.options[i].value === pb.src) {
+          src.selectedIndex = i; break;
+        }
+      }
+    }
+  }
 }
 
 initApp();

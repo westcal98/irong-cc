@@ -24,9 +24,137 @@ export default {
       return handleMarkHandled(request, env);
     }
 
+    if (url.pathname === '/push/subscribe' && request.method === 'POST') {
+      return handlePushSubscribe(request, env);
+    }
+
+    if (url.pathname === '/vapid-public-key' && request.method === 'GET') {
+      return new Response(JSON.stringify({ publicKey: env.VAPID_PUBLIC_KEY }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     return env.ASSETS.fetch(request);
   },
 };
+
+// ── WEB PUSH CRYPTO HELPERS ────────────────────────────
+
+function b64uToBytes(b64u) {
+  const b64 = b64u.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64.padEnd(Math.ceil(b64.length / 4) * 4, '=');
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function bytesToB64u(bytes) {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function concat(...arrs) {
+  const total = arrs.reduce((n, a) => n + a.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrs) { out.set(a, off); off += a.length; }
+  return out;
+}
+
+async function createVapidJwt(endpoint, vapidPrivB64u, vapidPubB64u) {
+  const enc = new TextEncoder();
+  const origin = new URL(endpoint).origin;
+  const toB64u = (s) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  const sigInput = `${toB64u(JSON.stringify({ typ: 'JWT', alg: 'ES256' }))}.${toB64u(JSON.stringify({
+    aud: origin,
+    exp: Math.floor(Date.now() / 1000) + 43200,
+    sub: 'mailto:westcal98@gmail.com',
+  }))}`;
+
+  // Wrap raw 32-byte P-256 private key in PKCS8 DER
+  const pkcs8 = concat(
+    new Uint8Array([
+      0x30,0x41,0x02,0x01,0x00,0x30,0x13,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,
+      0x02,0x01,0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07,0x04,0x27,
+      0x30,0x25,0x02,0x01,0x01,0x04,0x20,
+    ]),
+    b64uToBytes(vapidPrivB64u)
+  );
+
+  const signingKey = await crypto.subtle.importKey(
+    'pkcs8', pkcs8, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']
+  );
+  const sig = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' }, signingKey, enc.encode(sigInput)
+  );
+  return `${sigInput}.${bytesToB64u(new Uint8Array(sig))}`;
+}
+
+async function encryptPushPayload(plaintextStr, p256dhB64u, authB64u) {
+  const enc = new TextEncoder();
+  const receiverPubRaw = b64uToBytes(p256dhB64u);
+  const authSecret = b64uToBytes(authB64u);
+
+  const receiverKey = await crypto.subtle.importKey(
+    'raw', receiverPubRaw, { name: 'ECDH', namedCurve: 'P-256' }, false, []
+  );
+  const senderPair = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']
+  );
+  const sharedBits = await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: receiverKey }, senderPair.privateKey, 256
+  );
+  const senderPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', senderPair.publicKey));
+
+  // RFC 8291: IKM = HKDF(ecdh_secret, auth_secret, "WebPush: info\0" || ua_pub || as_pub)
+  const prkMat = await crypto.subtle.importKey('raw', sharedBits, { name: 'HKDF' }, false, ['deriveBits']);
+  const keyInfo = concat(enc.encode('WebPush: info\x00'), receiverPubRaw, senderPubRaw);
+  const ikm = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: authSecret, info: keyInfo }, prkMat, 256
+  );
+
+  // RFC 8188 aes128gcm: CEK and nonce from HKDF(ikm, salt, info)
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const ikmMat = await crypto.subtle.importKey('raw', ikm, { name: 'HKDF' }, false, ['deriveBits']);
+  const cek = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode('Content-Encoding: aes128gcm\x00') }, ikmMat, 128
+  );
+  const nonce = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode('Content-Encoding: nonce\x00') }, ikmMat, 96
+  );
+
+  const encKey = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce, tagLength: 128 },
+    encKey,
+    concat(enc.encode(plaintextStr), new Uint8Array([2]))
+  );
+
+  // aes128gcm header: salt(16) + rs(4 BE=4096) + idlen(1) + keyid(senderPub)
+  const rs = new Uint8Array(4);
+  new DataView(rs.buffer).setUint32(0, 4096, false);
+  return concat(salt, rs, new Uint8Array([senderPubRaw.length]), senderPubRaw, new Uint8Array(ciphertext));
+}
+
+async function sendWebPush(subscription, payload, vapidPriv, vapidPub) {
+  const { endpoint, keys: { p256dh, auth } } = subscription;
+  const jwt = await createVapidJwt(endpoint, vapidPriv, vapidPub);
+  const body = await encryptPushPayload(JSON.stringify(payload), p256dh, auth);
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `vapid t=${jwt},k=${vapidPub}`,
+      'Content-Type': 'application/octet-stream',
+      'Content-Encoding': 'aes128gcm',
+      'TTL': '86400',
+    },
+    body,
+  });
+}
+
+// ── ROUTE HANDLERS ─────────────────────────────────────
 
 async function handleSubmit(request, env) {
   try {
@@ -98,6 +226,28 @@ Submitted:   ${timestamp || new Date().toISOString()}`;
 
     await env.IRONG_KV.put(key, JSON.stringify(entry));
 
+    // Send web push notification
+    try {
+      const subRaw = await env.IRONG_KV.get('pushsub:main');
+      if (subRaw) {
+        const sub = JSON.parse(subRaw);
+        const pushPayload = {
+          title: isRental ? `[RENTAL REQUEST] ${name}` : `[INFO REQUEST] ${name}`,
+          body: `Trailer: ${trailer || '—'} | Phone: ${phone || '—'}`,
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          url: '/notifications',
+        };
+        const pushRes = await sendWebPush(sub, pushPayload, env.VAPID_PRIVATE_KEY, env.VAPID_PUBLIC_KEY);
+        if (!pushRes.ok) {
+          const errText = await pushRes.text();
+          console.error('[IronG] Push send failed:', pushRes.status, errText);
+        }
+      }
+    } catch (pushErr) {
+      console.error('[IronG] Push send error:', pushErr);
+    }
+
     return new Response(JSON.stringify({ success: true, message: 'Received' }), {
       status: 200,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -162,6 +312,29 @@ async function handleMarkHandled(request, env) {
     });
   } catch (err) {
     console.error('[IronG] Mark handled error:', err);
+    return new Response(JSON.stringify({ success: false, error: err.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePushSubscribe(request, env) {
+  try {
+    const sub = await request.json();
+    if (!sub || !sub.endpoint || !sub.keys) {
+      return new Response(JSON.stringify({ success: false, error: 'Invalid subscription' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    await env.IRONG_KV.put('pushsub:main', JSON.stringify(sub));
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Push subscribe error:', err);
     return new Response(JSON.stringify({ success: false, error: err.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

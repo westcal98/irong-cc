@@ -225,6 +225,10 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .fade-in{animation:fadeIn .3s ease;}
 
+/* ── PUSH PROMPT ── */
+.push-prompt{background:rgba(91,158,201,.08);border:1px solid rgba(91,158,201,.25);border-radius:6px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.push-prompt-text{font-size:13px;color:var(--text);line-height:1.5;flex:1;}
+
 /* ── NOTIFICATION BELL (header) ── */
 .notif-btn{position:absolute;right:12px;background:none;border:none;cursor:pointer;padding:6px 10px;display:flex;align-items:center;gap:4px;color:var(--muted);line-height:1;}
 .notif-btn:hover{color:var(--white);}
