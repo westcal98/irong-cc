@@ -639,7 +639,7 @@ function clearDraft() {
 function checkForDraft() {
   loadDraft(function(draft) {
     var b = g('draftBanner');
-    if (draft) { _currentDraft = draft; if (b) b.style.display = ''; }
+    if (draft) { _currentDraft = draft; if (b) b.style.display = 'flex'; }
     else { if (b) b.style.display = 'none'; }
   });
 }
@@ -692,7 +692,7 @@ function resumeDraft() {
 function discardDraft() {
   _currentDraft = null;
   clearDraft();
-  var b = g('draftBanner'); if (b) b.style.display = 'none';
+  newBooking();
 }
 
 // ── MESSAGE GENERATION ───────────────────────────────
