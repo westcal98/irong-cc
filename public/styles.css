@@ -254,3 +254,26 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 .notif-phone:hover{color:var(--primary-hover);}
 .notif-detail .notif-field{font-size:12px;}
 .notif-actions{display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #1a1a1a;flex-wrap:wrap;justify-content:space-between;}
+
+/* ── STEP TAB BACK-NAV ── */
+.flow-step.done{cursor:pointer;}
+.flow-step.done:hover{background:rgba(76,175,80,.15);border-color:rgba(76,175,80,.5);}
+.flow-step.done:active{background:rgba(76,175,80,.22);}
+
+/* ── DRAFT BANNER ── */
+.draft-banner{background:rgba(91,158,201,.08);border:1px solid rgba(91,158,201,.3);border-radius:6px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.draft-banner-text{font-size:13px;color:var(--text);flex:1;}
+
+/* ── STRIPE SECTION ── */
+.stripe-section{background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:14px;margin-bottom:12px;}
+.stripe-section-label{font-size:10px;color:var(--primary);text-transform:uppercase;letter-spacing:2px;font-family:'Oswald',sans-serif;margin-bottom:10px;}
+.stripe-link-input{width:100%;background:#1a1a1a;border:1px solid #3a3a3a;color:var(--white);font-size:12px;padding:8px 12px;border-radius:4px;font-family:'Barlow',sans-serif;margin-bottom:8px;cursor:text;}
+.stripe-sent{font-size:11px;color:var(--success);margin-bottom:6px;}
+.stripe-note{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;}
+
+/* ── TOAST ── */
+.toast-visible{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:#222;border:1px solid #3a3a3a;color:var(--white);font-family:'Oswald',sans-serif;font-size:12px;letter-spacing:1px;text-transform:uppercase;padding:10px 20px;border-radius:4px;z-index:9999;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.6);animation:fadeIn .2s ease;}
+
+/* ── DEPOSIT ACTION BUTTONS ── */
+.deposit-actions{display:flex;flex-direction:column;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #1a1a1a;}
+.deposit-manual{font-size:12px;color:var(--muted);margin-bottom:4px;}

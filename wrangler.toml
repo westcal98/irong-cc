@@ -4,6 +4,7 @@ compatibility_date = "2024-09-23"
 
 [vars]
 VAPID_PUBLIC_KEY = "BL298TvMWFHIxNCPb1PEN5Ir8CXj0JVoqhuivoQqjbIxBLoyM_kezlWkZvQv1UtPHNiiBlQAdTyvOnPkYf4BsiY"
+# STRIPE_SECRET_KEY — stored as wrangler secret (wrangler secret put STRIPE_SECRET_KEY)
 
 [assets]
 directory = "public"

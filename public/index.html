@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=4.0">
+<link rel="stylesheet" href="styles.css?v=5.0">
 </head>
 <body>
 <div class="app">
@@ -75,13 +75,22 @@
   <!-- NEW BOOKING -->
   <div class="page" id="page-new-booking">
     <div class="flow-steps">
-      <div class="flow-step active" id="fs1"><div class="fs-num">1</div><div class="fs-label">Customer</div></div>
+      <div class="flow-step active" id="fs1" onclick="stepTabClick(1)"><div class="fs-num">1</div><div class="fs-label">Customer</div></div>
       <div class="flow-arrow">›</div>
-      <div class="flow-step" id="fs2"><div class="fs-num">2</div><div class="fs-label">Details</div></div>
+      <div class="flow-step" id="fs2" onclick="stepTabClick(2)"><div class="fs-num">2</div><div class="fs-label">Details</div></div>
       <div class="flow-arrow">›</div>
-      <div class="flow-step" id="fs3"><div class="fs-num">3</div><div class="fs-label">Review</div></div>
+      <div class="flow-step" id="fs3" onclick="stepTabClick(3)"><div class="fs-num">3</div><div class="fs-label">Review</div></div>
       <div class="flow-arrow">›</div>
-      <div class="flow-step" id="fs4"><div class="fs-num">4</div><div class="fs-label">Send</div></div>
+      <div class="flow-step" id="fs4" onclick="stepTabClick(4)"><div class="fs-num">4</div><div class="fs-label">Send</div></div>
+    </div>
+
+    <!-- DRAFT RESUME BANNER -->
+    <div id="draftBanner" style="display:none;" class="draft-banner">
+      <div class="draft-banner-text">You have an unsaved booking in progress.</div>
+      <div style="display:flex;gap:8px;flex-shrink:0;">
+        <button class="btn btn-primary btn-sm" onclick="resumeDraft()">Resume</button>
+        <button class="btn btn-ghost btn-sm" onclick="discardDraft()">Start Fresh</button>
+      </div>
     </div>
 
     <!-- STEP 1 -->
@@ -154,25 +163,25 @@
         <button class="btn btn-ghost btn-sm" style="margin-left:auto;" onclick="goStep(1)">Change</button>
       </div>
 
-      <!-- GATE 0: Send Quote -->
+      <!-- GATE 0: Send Pre-Booking Package -->
       <div class="gate-section gate-active" id="gate0">
         <div class="gate-header">
           <div class="gate-num">0</div>
-          <div class="gate-title">Send Quote to Customer</div>
+          <div class="gate-title">Send Pre-Booking Package</div>
           <div class="gate-status" id="gate0-status">Send before agreement</div>
         </div>
         <div class="msg">
-          <div class="msg-label">📋 Rental Quote Message</div>
+          <div class="msg-label">📦 Pre-Booking Package Message</div>
           <div class="msg-text" id="msg-quote"></div>
           <div class="msg-actions">
-            <button class="btn btn-primary btn-sm" onclick="copyEl('msg-quote')">📋 Copy Quote</button>
-            <button class="btn btn-ghost btn-sm" onclick="openSMS('msg-quote')">📱 Open in Messages</button>
+            <button class="btn btn-primary btn-sm" onclick="packageSent('msg-quote','copy')">📋 Copy Message</button>
+            <button class="btn btn-ghost btn-sm" onclick="packageSent('msg-quote','sms')">💬 Open SMS</button>
           </div>
         </div>
         <div style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;">
           <label style="display:flex;gap:10px;align-items:center;cursor:pointer;">
             <input type="checkbox" id="quoteSent" style="accent-color:var(--success);width:18px;height:18px;flex-shrink:0;" onchange="onQuoteSent()">
-            <span style="font-size:13px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Quote sent — customer confirmed</span>
+            <span style="font-size:13px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Package sent — awaiting docs</span>
           </label>
         </div>
       </div>
@@ -182,7 +191,7 @@
         <div class="gate-header">
           <div class="gate-num">1</div>
           <div class="gate-title">Send Rental Agreement &amp; Get Signature</div>
-          <div class="gate-status" id="gate1-status">Locked — send quote first</div>
+          <div class="gate-status" id="gate1-status">Locked — send package first</div>
         </div>
         <div id="print-agreement"><div class="agr" id="agreementPreview"></div></div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
@@ -197,32 +206,17 @@
         </div>
       </div>
 
-      <!-- GATE 2: Payment Request -->
+      <!-- GATE 2: Stripe Payment Links -->
       <div class="gate-section gate-locked" id="gate2">
         <div class="gate-header">
           <div class="gate-num">2</div>
-          <div class="gate-title">Send Payment Request</div>
+          <div class="gate-title">Send Payment Links</div>
           <div class="gate-status" id="gate2-status">Locked — sign agreement first</div>
         </div>
-        <div class="msg" id="payRequestMsg">
-          <div class="msg-label">Payment Request Message</div>
-          <div class="msg-text" id="msg-payment"></div>
-          <div class="msg-actions">
-            <button class="btn btn-primary btn-sm" onclick="copyEl('msg-payment')">📋 Copy Message</button>
-            <button class="btn btn-ghost btn-sm" onclick="openSMS('msg-payment')">📱 Open in Messages</button>
-          </div>
-        </div>
-        <div style="background:#1a1a1a;border:1px solid #2a2a2a;padding:12px 14px;border-radius:4px;margin-bottom:14px;">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;font-family:'Oswald',sans-serif;margin-bottom:8px;">Payment Methods</div>
-          <div style="display:flex;flex-direction:column;gap:6px;">
-            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--primary);">💲 Cashapp: <span id="disp-cashapp" style="color:var(--white);">—</span></span>
-            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--primary);">💜 Venmo: <span id="disp-venmo" style="color:var(--white);">—</span></span>
-            <span style="font-family:'Oswald',sans-serif;font-size:13px;color:var(--primary);">🔲 Square: <span id="disp-square" style="color:var(--white);">—</span></span>
-          </div>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px;">Update payment handles in Settings.</div>
-        </div>
+        <div id="gate2-rental-section" style="margin-bottom:12px;"></div>
+        <div id="gate2-deposit-section" style="margin-bottom:12px;"></div>
         <div style="padding-top:14px;border-top:1px solid #1a1a1a;">
-          <button class="btn btn-success" style="width:100%;" onclick="onPaymentConfirmed()">💳 Payment Received — Unlock Pickup Instructions</button>
+          <button class="btn btn-success" style="width:100%;" id="payConfirmBtn" onclick="onPaymentConfirmed()" disabled>✓ Mark Payment Received &amp; Deposit Held</button>
         </div>
       </div>
 
@@ -314,7 +308,7 @@
       <div class="fg"><label class="fl">Email</label><input class="fi" id="s-em" value="info@irongequipment.com"></div>
       <div class="fg"><label class="fl">Storage Address</label><input class="fi" id="s-addr" value="16245 W HWY 66, Yukon OK 73099"></div>
       <div style="height:1px;background:#1a1a1a;margin:16px 0;"></div>
-      <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Payment Handles</div>
+      <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Payment Handles (manual fallback)</div>
       <div class="fg"><label class="fl">Cashapp Handle</label><input class="fi" id="s-ca" placeholder="$IronGEquipment"></div>
       <div class="fg"><label class="fl">Venmo Handle</label><input class="fi" id="s-vm" placeholder="@IronG-Equipment"></div>
       <div class="fg"><label class="fl">Square Payment Link</label><input class="fi" id="s-sq" placeholder="https://square.link/..."></div>
@@ -342,16 +336,18 @@
     </div>
 
     <div class="card">
-      <div class="card-header"><div class="card-title">What's New — v2.0</div></div>
+      <div class="card-header"><div class="card-title">What's New — v6.0</div></div>
       <div class="card-body">
         <div style="font-size:13px;color:var(--text);line-height:2;">
-          <div style="margin-bottom:10px;font-family:'Oswald',sans-serif;color:var(--primary);letter-spacing:1px;">v2.0 — Mobile-First Redesign</div>
-          <div>✅ Slide-out nav drawer (☰ bottom-left)</div>
-          <div>✅ New Booking FAB (+ bottom-right)</div>
-          <div>✅ Android back button navigation</div>
-          <div>✅ Card-based rental lists (no tables)</div>
-          <div>✅ No horizontal overflow on any screen</div>
-          <div>✅ Iron G blue color scheme</div>
+          <div style="margin-bottom:10px;font-family:'Oswald',sans-serif;color:var(--primary);letter-spacing:1px;">v6.0 — Stripe + Smart Workflow</div>
+          <div>✅ Stripe payment links for rental fee</div>
+          <div>✅ Stripe deposit authorization hold</div>
+          <div>✅ One-tap deposit release or capture</div>
+          <div>✅ 7-stage booking status system</div>
+          <div>✅ Draft booking auto-save &amp; resume</div>
+          <div>✅ Pre-booking package message (Gate 0)</div>
+          <div>✅ Step tab back-navigation</div>
+          <div>✅ Android back button in booking flow</div>
         </div>
       </div>
     </div>
@@ -381,6 +377,6 @@
 <button class="fab" onclick="fabNewBooking()">+</button>
 
 </div><!-- /app -->
-<script src="app.js?v=4.0"></script>
+<script src="app.js?v=5.0"></script>
 </body>
 </html>

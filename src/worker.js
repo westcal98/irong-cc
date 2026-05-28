@@ -1,15 +1,24 @@
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': 'https://irongequipment.com',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+const ALLOWED_ORIGINS = new Set([
+  'https://irongequipment.com',
+  'https://irong-cc.westcal98.workers.dev',
+]);
+
+function getCors(request) {
+  const origin = request.headers.get('Origin') || '';
+  const ao = ALLOWED_ORIGINS.has(origin) ? origin : 'https://irong-cc.westcal98.workers.dev';
+  return {
+    'Access-Control-Allow-Origin': ao,
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+}
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
+      return new Response(null, { status: 204, headers: getCors(request) });
     }
 
     if (url.pathname === '/submit' && request.method === 'POST') {
@@ -34,9 +43,207 @@ export default {
       });
     }
 
+    if (url.pathname === '/stripe/payment-link' && request.method === 'POST') {
+      return handleStripePaymentLink(request, env);
+    }
+
+    if (url.pathname === '/stripe/deposit-intent' && request.method === 'POST') {
+      return handleStripeDepositIntent(request, env);
+    }
+
+    if (url.pathname === '/stripe/deposit-capture' && request.method === 'POST') {
+      return handleStripeDepositCapture(request, env);
+    }
+
+    if (url.pathname === '/stripe/deposit-cancel' && request.method === 'POST') {
+      return handleStripeDepositCancel(request, env);
+    }
+
     return env.ASSETS.fetch(request);
   },
 };
+
+// ── STRIPE HELPERS ─────────────────────────────────────
+
+function stripeForm(obj, prefix) {
+  const p = [];
+  for (const k in obj) {
+    const key = prefix ? prefix + '[' + k + ']' : k;
+    const val = obj[k];
+    if (val !== null && val !== undefined && typeof val === 'object' && !Array.isArray(val)) {
+      p.push(stripeForm(val, key));
+    } else if (Array.isArray(val)) {
+      val.forEach(function(v, i) {
+        if (v !== null && typeof v === 'object') {
+          p.push(stripeForm(v, key + '[' + i + ']'));
+        } else {
+          p.push(encodeURIComponent(key + '[' + i + ']') + '=' + encodeURIComponent(v));
+        }
+      });
+    } else if (val !== null && val !== undefined) {
+      p.push(encodeURIComponent(key) + '=' + encodeURIComponent(val));
+    }
+  }
+  return p.join('&');
+}
+
+async function stripePost(path, params, secretKey) {
+  const body = stripeForm(params, '');
+  const res = await fetch('https://api.stripe.com/v1' + path, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + secretKey,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+  return res;
+}
+
+// ── STRIPE ROUTE HANDLERS ──────────────────────────────
+
+async function handleStripePaymentLink(request, env) {
+  const cors = getCors(request);
+  try {
+    const { amount, description, bookingId } = await request.json();
+    const amountCents = Math.round(amount * 100);
+
+    const res = await stripePost('/payment_links', {
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: { name: description },
+            unit_amount: amountCents,
+          },
+          quantity: 1,
+        },
+      ],
+    }, env.STRIPE_SECRET_KEY);
+
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('[IronG] Stripe payment-link error:', data);
+      return new Response(JSON.stringify({ error: data.error?.message || 'Stripe error' }), {
+        status: 500,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ url: data.url, id: data.id }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] handleStripePaymentLink error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleStripeDepositIntent(request, env) {
+  const cors = getCors(request);
+  try {
+    const { amount, description, bookingId } = await request.json();
+    const amountCents = Math.round(amount * 100);
+
+    const res = await stripePost('/checkout/sessions', {
+      mode: 'payment',
+      payment_method_types: ['card'],
+      payment_intent_data: { capture_method: 'manual' },
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: { name: description },
+            unit_amount: amountCents,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: 'https://irong-cc.westcal98.workers.dev',
+      cancel_url: 'https://irong-cc.westcal98.workers.dev',
+    }, env.STRIPE_SECRET_KEY);
+
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('[IronG] Stripe deposit-intent error:', data);
+      return new Response(JSON.stringify({ error: data.error?.message || 'Stripe error' }), {
+        status: 500,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({
+      url: data.url,
+      paymentIntentId: data.payment_intent,
+      sessionId: data.id,
+    }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] handleStripeDepositIntent error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleStripeDepositCapture(request, env) {
+  const cors = getCors(request);
+  try {
+    const { paymentIntentId } = await request.json();
+    const res = await stripePost('/payment_intents/' + paymentIntentId + '/capture', {}, env.STRIPE_SECRET_KEY);
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('[IronG] Stripe capture error:', data);
+      return new Response(JSON.stringify({ error: data.error?.message || 'Stripe error' }), {
+        status: 500,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ success: true, status: data.status }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] handleStripeDepositCapture error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleStripeDepositCancel(request, env) {
+  const cors = getCors(request);
+  try {
+    const { paymentIntentId } = await request.json();
+    const res = await stripePost('/payment_intents/' + paymentIntentId + '/cancel', {}, env.STRIPE_SECRET_KEY);
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('[IronG] Stripe cancel error:', data);
+      return new Response(JSON.stringify({ error: data.error?.message || 'Stripe error' }), {
+        status: 500,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ success: true, status: data.status }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] handleStripeDepositCancel error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
 
 // ── WEB PUSH CRYPTO HELPERS ────────────────────────────
 
@@ -73,7 +280,6 @@ async function createVapidJwt(endpoint, vapidPrivB64u, vapidPubB64u) {
     sub: 'mailto:westcal98@gmail.com',
   }))}`;
 
-  // Wrap raw 32-byte P-256 private key in PKCS8 DER
   const pkcs8 = concat(
     new Uint8Array([
       0x30,0x41,0x02,0x01,0x00,0x30,0x13,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,
@@ -108,14 +314,12 @@ async function encryptPushPayload(plaintextStr, p256dhB64u, authB64u) {
   );
   const senderPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', senderPair.publicKey));
 
-  // RFC 8291: IKM = HKDF(ecdh_secret, auth_secret, "WebPush: info\0" || ua_pub || as_pub)
   const prkMat = await crypto.subtle.importKey('raw', sharedBits, { name: 'HKDF' }, false, ['deriveBits']);
   const keyInfo = concat(enc.encode('WebPush: info\x00'), receiverPubRaw, senderPubRaw);
   const ikm = await crypto.subtle.deriveBits(
     { name: 'HKDF', hash: 'SHA-256', salt: authSecret, info: keyInfo }, prkMat, 256
   );
 
-  // RFC 8188 aes128gcm: CEK and nonce from HKDF(ikm, salt, info)
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const ikmMat = await crypto.subtle.importKey('raw', ikm, { name: 'HKDF' }, false, ['deriveBits']);
   const cek = await crypto.subtle.deriveBits(
@@ -132,7 +336,6 @@ async function encryptPushPayload(plaintextStr, p256dhB64u, authB64u) {
     concat(enc.encode(plaintextStr), new Uint8Array([2]))
   );
 
-  // aes128gcm header: salt(16) + rs(4 BE=4096) + idlen(1) + keyid(senderPub)
   const rs = new Uint8Array(4);
   new DataView(rs.buffer).setUint32(0, 4096, false);
   return concat(salt, rs, new Uint8Array([senderPubRaw.length]), senderPubRaw, new Uint8Array(ciphertext));
@@ -157,6 +360,7 @@ async function sendWebPush(subscription, payload, vapidPriv, vapidPub) {
 // ── ROUTE HANDLERS ─────────────────────────────────────
 
 async function handleSubmit(request, env) {
+  const cors = getCors(request);
   try {
     const body = await request.json();
     const {
@@ -226,7 +430,6 @@ Submitted:   ${timestamp || new Date().toISOString()}`;
 
     await env.IRONG_KV.put(key, JSON.stringify(entry));
 
-    // Send web push notification
     try {
       const subRaw = await env.IRONG_KV.get('pushsub:main');
       if (subRaw) {
@@ -250,13 +453,13 @@ Submitted:   ${timestamp || new Date().toISOString()}`;
 
     return new Response(JSON.stringify({ success: true, message: 'Received' }), {
       status: 200,
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      headers: { ...cors, 'Content-Type': 'application/json' },
     });
   } catch (err) {
     console.error('[IronG] Submit error:', err);
     return new Response(JSON.stringify({ success: false, error: err.message }), {
       status: 500,
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      headers: { ...getCors(request), 'Content-Type': 'application/json' },
     });
   }
 }
