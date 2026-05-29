@@ -92,9 +92,16 @@
         <div class="card-body">
           <div class="fr"><div class="fg"><label class="fl">First Name *</label><input class="fi" id="f-fn" type="text" placeholder="John"></div><div class="fg"><label class="fl">Last Name *</label><input class="fi" id="f-ln" type="text" placeholder="Smith"></div></div>
           <div class="fg"><label class="fl">Phone Number *</label><input class="fi" id="f-ph" type="tel" placeholder="(405) 555-0000"></div>
-          <div class="fg"><label class="fl">Email Address</label><input class="fi" id="f-em" type="email" placeholder="customer@email.com"></div>
+          <div class="fg"><label class="fl">Email Address *</label><input class="fi" id="f-em" type="email" placeholder="customer@email.com"></div>
+          <div class="fg">
+            <label class="fl">Contact Preference</label>
+            <div class="comm-toggle" id="contactPrefToggle">
+              <button class="comm-opt active" onclick="setContactPref('sms',this)">📱 Text</button>
+              <button class="comm-opt" onclick="setContactPref('email',this)">📧 Email</button>
+            </div>
+          </div>
           <div class="fg"><label class="fl">City</label><input class="fi" id="f-cy" type="text" placeholder="Yukon, Edmond, Moore..."></div>
-          <div class="fg"><label class="fl">Tow Vehicle</label><input class="fi" id="f-vh" type="text" placeholder="2020 Ford F-250"></div>
+          <div class="fg"><label class="fl">Tow Vehicle *</label><input class="fi" id="f-vh" type="text" placeholder="2020 Ford F-250"></div>
           <div class="fg">
             <label class="fl">Preferred Contact Method</label>
             <div class="comm-toggle" id="commToggle">
@@ -115,14 +122,30 @@
         <div class="card-header"><div class="card-title">Rental Details</div></div>
         <div class="card-body">
           <div class="fg"><label class="fl">Trailer *</label><select class="form-select" id="f-tr" onchange="calcPrice()"><option value="">— Select —</option><option value="utility">7x18 Utility Trailer 7K</option><option value="hauler">7x18 Car Hauler 7K</option></select></div>
-          <div class="fr"><div class="fg"><label class="fl">Start Date *</label><input class="fi" id="f-sd" type="date" onchange="calcPrice()"></div><div class="fg"><label class="fl">End Date *</label><input class="fi" id="f-ed" type="date" onchange="calcPrice()"></div></div>
+          <div class="fr"><div class="fg"><label class="fl">Start Date *</label><input class="fi" id="f-sd" type="date" onchange="calcPrice()"></div><div class="fg"><label class="fl">Start Time *</label><input class="fi" id="f-st" type="time" onchange="onStartTimeChange()"></div></div>
+          <div class="fr"><div class="fg"><label class="fl">End Date *</label><input class="fi" id="f-ed" type="date" onchange="calcPrice()"></div><div class="fg"><label class="fl">End Time *</label><input class="fi" id="f-et" type="time" onchange="calcPrice()"></div></div>
           <div class="fg"><label class="fl">Refundable Deposit ($)</label><input class="fi" id="f-dep" type="number" min="0" step="1" placeholder="200" oninput="calcPrice()"></div>
-          <div class="fg"><label class="fl">What Are They Hauling?</label><input class="fi" id="f-ld" type="text" placeholder="Gravel, furniture, ATV..."></div>
+          <div class="fg"><label class="fl">What Are They Hauling? *</label><input class="fi" id="f-ld" type="text" placeholder="Gravel, furniture, ATV..."></div>
           <div class="fg"><label class="fl">How Did They Find Us?</label><select class="form-select" id="f-src"><option value="">— Select —</option><option>Google Search</option><option>Google Maps</option><option>Facebook</option><option>Facebook Marketplace</option><option>TikTok</option><option>Friend/Family</option><option>Nextdoor</option><option>Craigslist</option><option>Repeat Customer</option><option>Other</option></select></div>
           <div class="fg"><label class="fl">Notes</label><textarea class="form-textarea" id="f-nt" placeholder="Special requests, delivery needed..."></textarea></div>
         </div>
       </div>
       <div class="card"><div class="card-header"><div class="card-title">Price Calculator</div></div><div class="card-body" id="priceCalc"><div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div></div></div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Add-Ons</div></div>
+        <div class="card-body">
+          <label class="addon-row"><input type="checkbox" class="addon-chk" data-label="Hitch Ball" data-amount="15" onchange="calcPrice()"><span class="addon-label">Hitch Ball</span><span class="addon-price">$15</span></label>
+          <label class="addon-row"><input type="checkbox" class="addon-chk" data-label="Safety Chains" data-amount="10" onchange="calcPrice()"><span class="addon-label">Safety Chains</span><span class="addon-price">$10</span></label>
+          <label class="addon-row"><input type="checkbox" class="addon-chk" data-label="Trailer Jack" data-amount="10" onchange="calcPrice()"><span class="addon-label">Trailer Jack</span><span class="addon-price">$10</span></label>
+          <label class="addon-row"><input type="checkbox" class="addon-chk" data-label="Ratchet Straps (set of 4)" data-amount="15" onchange="calcPrice()"><span class="addon-label">Ratchet Straps (set of 4)</span><span class="addon-price">$15</span></label>
+          <div id="customAddOnsList"></div>
+          <div class="addon-custom-row">
+            <input class="fi addon-custom-input" id="addon-new-label" type="text" placeholder="Add-on label">
+            <input class="fi addon-custom-amt" id="addon-new-amount" type="number" min="0" placeholder="$0">
+            <button class="btn btn-ghost btn-sm" onclick="addCustomAddOn()">Add</button>
+          </div>
+        </div>
+      </div>
       <div style="margin-top:4px;display:flex;justify-content:space-between;"><button class="btn btn-ghost" onclick="goStep(1)">← Back</button><button class="btn btn-primary" onclick="goStep(3)">Next: Review →</button></div>
     </div>
 

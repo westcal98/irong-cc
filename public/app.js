@@ -4,6 +4,8 @@ var DB_NAME = 'ironGCC';
 var DB_STORE = 'state';
 var LS_KEY = 'ironG_v3';
 var commPref = 'text';
+var _contactPref = 'sms';
+var _customAddOns = [];
 var db = null;
 var currentPage = 'dashboard';
 var _currentDraftId = null;
@@ -166,22 +168,41 @@ window.addEventListener('popstate', function(e) {
 // ── COMM PREFERENCE ─────────────────────────────────
 function setComm(val, el) {
   commPref = val;
-  document.querySelectorAll('.comm-opt').forEach(function(b){b.classList.remove('active');});
+  document.querySelectorAll('#commToggle .comm-opt').forEach(function(b){b.classList.remove('active');});
   el.classList.add('active');
 }
 
+function setContactPref(val, el) {
+  _contactPref = val;
+  document.querySelectorAll('#contactPrefToggle .comm-opt').forEach(function(b){b.classList.remove('active');});
+  el.classList.add('active');
+}
+
+function fmtMoney(n) { return n % 1 === 0 ? '$' + n : '$' + n.toFixed(2); }
+
 // ── PRICING ─────────────────────────────────────────
+function getAddOnsTotal() {
+  var total = 0, addOns = [];
+  document.querySelectorAll('.addon-chk:checked').forEach(function(c) {
+    var label = c.getAttribute('data-label'); var amount = parseFloat(c.getAttribute('data-amount')) || 0;
+    total += amount; addOns.push({label:label, amount:amount});
+  });
+  _customAddOns.forEach(function(a) { total += a.amount; addOns.push(a); });
+  return {total:total, addOns:addOns};
+}
+
 function calcPrice() {
   var tid = g('f-tr') ? g('f-tr').value : '';
   var sd = g('f-sd') ? g('f-sd').value : '';
+  var st = g('f-st') ? g('f-st').value : '';
   var ed = g('f-ed') ? g('f-ed').value : '';
-  var r = doCalc(tid, sd, ed);
+  var et = g('f-et') ? g('f-et').value : '';
+  var r = doCalc(tid, sd, st, ed, et);
   var div = g('priceCalc');
   if (!r) {
     if (div) div.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div>';
     return;
   }
-  // Deposit override: reset to trailer default when trailer changes, else use input value
   var depEl = g('f-dep');
   if (depEl) {
     if (tid !== _lastCalcTid) {
@@ -189,69 +210,131 @@ function calcPrice() {
       _lastCalcTid = tid;
     } else {
       var customDep = parseInt(depEl.value, 10);
-      if (!isNaN(customDep) && customDep >= 0) { r.dep = customDep; r.grand = r.total + customDep; }
+      if (!isNaN(customDep) && customDep >= 0) { r.dep = customDep; }
     }
   }
+  var ao = getAddOnsTotal();
+  var TAX_RATE = 0.0885;
+  var tax = Math.round((r.base + ao.total) * TAX_RATE * 100) / 100;
+  r.addOns = ao.addOns; r.addOnsTotal = ao.total;
+  r.taxRate = TAX_RATE; r.tax = tax;
+  r.total = r.base + ao.total;
+  r.grand = r.base + ao.total + tax + r.dep;
   if (div) div.innerHTML = cpHtml(r);
   state.booking.pricing = r;
 }
 
-function doCalc(tid, sd, ed) {
+function doCalc(tid, sd, st, ed, et) {
   if (!tid || !sd || !ed) return null;
   var t = findFleet(tid); if (!t) return null;
   var s = new Date(sd + 'T12:00:00'), e = new Date(ed + 'T12:00:00');
   if (e <= s) return null;
-  var days = Math.round((e-s)/86400000); if (days <= 0) return null;
+  var pricingDays = Math.round((e-s)/86400000); if (pricingDays <= 0) return null;
+  // Exact duration from full datetimes when times provided
+  var exactDays = pricingDays, durationLabel = '';
+  if (st && et) {
+    var sdt = new Date(sd + 'T' + st), edt = new Date(ed + 'T' + et);
+    var diffMs = edt - sdt;
+    if (diffMs > 0) {
+      var totalHrs = diffMs / 3600000;
+      exactDays = totalHrs / 24;
+      var wholeDays = Math.floor(totalHrs / 24);
+      var remHrs = Math.round(totalHrs % 24);
+      durationLabel = remHrs === 0
+        ? wholeDays + ' day' + (wholeDays !== 1 ? 's' : '')
+        : wholeDays + ' day' + (wholeDays !== 1 ? 's' : '') + ' ' + remHrs + ' hr' + (remHrs !== 1 ? 's' : '');
+    }
+  }
+  if (!durationLabel) durationLabel = pricingDays + ' day' + (pricingDays !== 1 ? 's' : '');
   var p = t.p, base = 0, type = '', breakdown = [];
-  if (days >= 7) {
+  if (pricingDays >= 7) {
     base = p.wk; type = 'Weekly rate (7 days)';
     breakdown.push({label:'Weekly rate', amount:p.wk});
   } else {
     var d = new Date(s); var wdCount = 0, weCount = 0;
-    for (var i = 0; i < days; i++) {
+    for (var i = 0; i < pricingDays; i++) {
       var dw = d.getDay();
       if (dw===5||dw===6||dw===0) { weCount++; base += p.we; } else { wdCount++; base += p.wd; }
       d.setDate(d.getDate()+1);
     }
-    type = days === 1 ? 'Daily rate' : days + '-day rate';
+    type = pricingDays === 1 ? 'Daily rate' : pricingDays + '-day rate';
     if (wdCount > 0) breakdown.push({label: wdCount + ' weekday' + (wdCount>1?'s':'') + ' @ $' + p.wd + '/day', amount: wdCount * p.wd});
     if (weCount > 0) breakdown.push({label: weCount + ' weekend day' + (weCount>1?'s':'') + ' @ $' + p.we + '/day', amount: weCount * p.we});
   }
-  return {days:days, base:base, total:base, dep:p.dep, grand:base+p.dep, type:type, tname:t.name, breakdown:breakdown};
+  return {days:exactDays, pricingDays:pricingDays, durationLabel:durationLabel, base:base, total:base, dep:p.dep, grand:base+p.dep, type:type, tname:t.name, breakdown:breakdown};
 }
 
 function cpHtml(r) {
   var bkHtml = '';
   if (r.breakdown && r.breakdown.length) {
     r.breakdown.forEach(function(b){ bkHtml += '<div class="crow"><span class="cl">' + b.label + '</span><span class="cv o">$' + b.amount + '</span></div>'; });
-  } else {
-    bkHtml = '<div class="crow"><span class="cl">' + r.type + ' (' + r.days + ' day' + (r.days>1?'s':'') + ')</span><span class="cv o">$' + r.base + '</span></div>';
   }
-  return '<div class="cpanel" style="margin:0;"><h4>Price Breakdown</h4>' +
-    bkHtml +
-    '<div class="crow"><span class="cl">Rental subtotal</span><span class="cv o">$' + r.total + '</span></div>' +
-    '<div class="crow"><span class="cl">Refundable deposit</span><span class="cv">$' + r.dep + '</span></div>' +
-    '<div class="crow" style="border-top:1px solid var(--orange-dark);margin-top:6px;padding-top:8px;"><span class="cl" style="color:var(--white);font-weight:700;">TOTAL TODAY</span><span class="cv o" style="font-size:22px;">$' + r.grand + '</span></div>' +
-    '<div style="font-size:11px;color:var(--muted);margin-top:8px;">* Sales tax may apply — confirm with OTC before collecting.</div>' +
-    '</div>';
+  var html = '<div class="cpanel" style="margin:0;"><h4>Price Breakdown — ' + (r.durationLabel || '') + '</h4>' + bkHtml;
+  html += '<div class="crow"><span class="cl">Rental Fee</span><span class="cv o">$' + r.base + '</span></div>';
+  if (r.addOnsTotal) html += '<div class="crow"><span class="cl">Add-Ons Total</span><span class="cv o">$' + r.addOnsTotal + '</span></div>';
+  html += '<div class="crow"><span class="cl">Tax (8.85%)</span><span class="cv">' + fmtMoney(r.tax||0) + '</span></div>';
+  html += '<div class="crow"><span class="cl">Deposit</span><span class="cv">$' + r.dep + '</span></div>';
+  html += '<div class="crow" style="border-top:1px solid var(--orange-dark);margin-top:6px;padding-top:8px;"><span class="cl" style="color:var(--white);font-weight:700;">TOTAL DUE</span><span class="cv o" style="font-size:22px;">' + fmtMoney(r.grand) + '</span></div>';
+  html += '</div>';
+  return html;
 }
 
 function quickCalc() {
-  var r = doCalc(g('qc-tr').value, g('qc-sd')?g('qc-sd').value:'', g('qc-ed')?g('qc-ed').value:'');
+  var r = doCalc(g('qc-tr').value, g('qc-sd')?g('qc-sd').value:'', '', g('qc-ed')?g('qc-ed').value:'', '');
+  if (r) {
+    r.addOns = []; r.addOnsTotal = 0;
+    var TAX_RATE = 0.0885;
+    r.tax = Math.round(r.base * TAX_RATE * 100) / 100;
+    r.taxRate = TAX_RATE; r.grand = r.base + r.tax + r.dep;
+  }
   var div = g('qcResult'); if (!div) return;
   div.innerHTML = r ? cpHtml(r) : '';
+}
+
+// ── ADD-ONS HELPERS ──────────────────────────────────
+function onStartTimeChange() {
+  var st = g('f-st'); var et = g('f-et');
+  if (st && et && !et.value && st.value) et.value = st.value;
+  calcPrice();
+}
+
+function addCustomAddOn() {
+  var labelEl = g('addon-new-label'), amtEl = g('addon-new-amount');
+  if (!labelEl || !amtEl) return;
+  var label = labelEl.value.trim(); var amount = parseFloat(amtEl.value) || 0;
+  if (!label) { alert('Enter an add-on label.'); return; }
+  _customAddOns.push({label:label, amount:amount});
+  labelEl.value = ''; amtEl.value = '';
+  renderCustomAddOns(); calcPrice();
+}
+
+function removeCustomAddOn(idx) {
+  _customAddOns.splice(idx, 1);
+  renderCustomAddOns(); calcPrice();
+}
+
+function renderCustomAddOns() {
+  var div = g('customAddOnsList'); if (!div) return;
+  var h = '';
+  _customAddOns.forEach(function(a, i) {
+    h += '<div class="addon-row addon-custom"><span class="addon-label">' + escHtml(a.label) + '</span><span class="addon-price">$' + a.amount + '</span><button class="btn btn-ghost btn-sm" onclick="removeCustomAddOn(' + i + ')" style="padding:2px 6px;font-size:10px;">✕</button></div>';
+  });
+  div.innerHTML = h;
 }
 
 // ── BOOKING FLOW ─────────────────────────────────────
 function goStep(n, fromHistory) {
   if (!fromHistory) {
     if (n === 2) {
-      if (!g('f-fn').value.trim() || !g('f-ph').value.trim()) { alert('Please enter customer name and phone.'); return; }
-      state.booking.customer = {fn:g('f-fn').value, ln:g('f-ln').value, ph:g('f-ph').value, em:g('f-em').value, cy:g('f-cy').value, vh:g('f-vh').value, comm:commPref};
+      if (!g('f-fn').value.trim() || !g('f-ph').value.trim() || !g('f-em').value.trim() || !g('f-vh').value.trim()) { alert('Please enter name, phone, email, and tow vehicle.'); return; }
+      state.booking.customer = {fn:g('f-fn').value, ln:g('f-ln').value, ph:g('f-ph').value, em:g('f-em').value, cy:g('f-cy').value, vh:g('f-vh').value, comm:commPref, contactPref:_contactPref};
     }
     if (n === 3) {
-      if (!g('f-tr').value || !g('f-sd').value || !g('f-ed').value) { alert('Please select trailer and dates.'); return; }
-      state.booking.rental = {tid:g('f-tr').value, sd:g('f-sd').value, ed:g('f-ed').value, ld:g('f-ld') ? g('f-ld').value : '', src:g('f-src').value, nt:g('f-nt').value};
+      var _st = g('f-st') ? g('f-st').value : '';
+      var _et = g('f-et') ? g('f-et').value : '';
+      if (!g('f-tr').value || !g('f-sd').value || !g('f-ed').value || !_st || !_et) { alert('Please select trailer, dates, and times.'); return; }
+      if (!(g('f-ld') && g('f-ld').value.trim())) { alert('Please enter what they are hauling.'); return; }
+      state.booking.rental = {tid:g('f-tr').value, sd:g('f-sd').value, st:_st, ed:g('f-ed').value, et:_et, ld:g('f-ld').value, src:g('f-src').value, nt:g('f-nt').value};
       calcPrice(); drawBookSummary(); drawComboAssign();
     }
   }
@@ -281,16 +364,20 @@ function drawBookSummary() {
   var c = state.booking.customer, r = state.booking.rental, p = state.booking.pricing;
   var div = g('bookSummary'); if (!div || !c || !r || !p) return;
   var t = findFleet(r.tid);
+  var daysDisp = p.durationLabel || (Math.ceil(p.days) + ' day' + (p.days>1?'s':''));
+  var timesDisp = (r.st && r.et) ? (r.st + ' – ' + r.et) : '';
   div.innerHTML = '<h4>Booking Summary</h4>' +
     '<div class="crow"><span class="cl">Customer</span><span class="cv">' + c.fn + ' ' + c.ln + '</span></div>' +
     '<div class="crow"><span class="cl">Phone</span><span class="cv o">' + c.ph + '</span></div>' +
-    '<div class="crow"><span class="cl">Contact Pref</span><span class="cv">' + (c.comm==='text'?'📱 Text':c.comm==='email'?'📧 Email':'📱 Text + 📧 Email') + '</span></div>' +
+    '<div class="crow"><span class="cl">Contact Pref</span><span class="cv">' + (c.contactPref==='email'?'📧 Email':'📱 Text') + '</span></div>' +
     '<div class="crow"><span class="cl">Trailer</span><span class="cv">' + (t?t.name:'') + '</span></div>' +
-    '<div class="crow"><span class="cl">Dates</span><span class="cv">' + r.sd + ' to ' + r.ed + '</span></div>' +
-    '<div class="crow"><span class="cl">Duration</span><span class="cv">' + p.days + ' day' + (p.days>1?'s':'') + '</span></div>' +
-    '<div class="crow"><span class="cl">Rental</span><span class="cv o">$' + p.base + '</span></div>' +
+    '<div class="crow"><span class="cl">Dates</span><span class="cv">' + r.sd + (timesDisp?' '+r.st:'') + ' → ' + r.ed + (timesDisp?' '+r.et:'') + '</span></div>' +
+    '<div class="crow"><span class="cl">Duration</span><span class="cv">' + daysDisp + '</span></div>' +
+    '<div class="crow"><span class="cl">Rental Fee</span><span class="cv o">$' + p.base + '</span></div>' +
+    (p.addOnsTotal ? '<div class="crow"><span class="cl">Add-Ons</span><span class="cv o">$' + p.addOnsTotal + '</span></div>' : '') +
+    '<div class="crow"><span class="cl">Tax (8.85%)</span><span class="cv">' + fmtMoney(p.tax||0) + '</span></div>' +
     '<div class="crow"><span class="cl">Deposit</span><span class="cv">$' + p.dep + '</span></div>' +
-    '<div class="crow" style="border-top:1px solid var(--orange-dark);margin-top:4px;padding-top:6px;"><span class="cl" style="color:var(--white);font-weight:700;">TOTAL TODAY</span><span class="cv o" style="font-size:20px;">$' + p.grand + '</span></div>';
+    '<div class="crow" style="border-top:1px solid var(--orange-dark);margin-top:4px;padding-top:6px;"><span class="cl" style="color:var(--white);font-weight:700;">TOTAL DUE</span><span class="cv o" style="font-size:20px;">' + fmtMoney(p.grand) + '</span></div>';
 }
 
 function drawComboAssign() {
@@ -326,8 +413,12 @@ function confirmBooking() {
   var t = findFleet(r.tid);
   var bk = {
     id: state.nextId++, c: c, trailer: t.name, tid: r.tid, sd: r.sd, ed: r.ed,
-    days: p.days, rental: p.base, dep: p.dep, total: p.total, grand: p.grand,
-    combo: t.combo, load: r.ld, src: r.src, status: 'docs_pending',
+    startTime: r.st||'', endTime: r.et||'',
+    days: p.days, durationLabel: p.durationLabel||'',
+    rental: p.base, dep: p.dep, total: p.base + (p.addOnsTotal||0),
+    tax: p.tax||0, taxRate: p.taxRate||0.0885,
+    addOns: p.addOns||[], addOnsTotal: p.addOnsTotal||0,
+    grand: p.grand, load: r.ld, src: r.src, status: 'docs_pending',
     nt: r.nt, at: new Date().toISOString(), breakdown: p.breakdown||[], type: p.type,
     paymentLinkUrl: null, paymentLinkId: null,
     depositIntentId: null, depositSessionId: null, depositSessionUrl: null, depositStatus: null,
@@ -548,13 +639,15 @@ function saveDraft(step) {
     fields: {
       fn: gs('f-fn',''), ln: gs('f-ln',''), ph: gs('f-ph',''),
       em: gs('f-em',''), cy: gs('f-cy',''), vh: gs('f-vh',''),
-      comm: commPref,
+      comm: commPref, contactPref: _contactPref,
       tr: g('f-tr') ? g('f-tr').value : '',
       sd: g('f-sd') ? g('f-sd').value : '',
+      st: g('f-st') ? g('f-st').value : '',
       ed: g('f-ed') ? g('f-ed').value : '',
+      et: g('f-et') ? g('f-et').value : '',
       dep: g('f-dep') ? g('f-dep').value : '',
       ld: gs('f-ld',''), src: g('f-src') ? g('f-src').value : '',
-      nt: gs('f-nt','')
+      nt: gs('f-nt',''), addOns: _customAddOns.slice()
     },
     pricing: state.booking.pricing || null
   };
@@ -570,12 +663,23 @@ function clearDraft() {
 function _resetForm() {
   state.booking = {};
   ['f-fn','f-ln','f-ph','f-em','f-cy','f-vh','f-ld','f-nt','f-dep'].forEach(function(id){ var el = g(id); if (el) el.value = ''; });
-  ['f-tr','f-sd','f-ed','f-src'].forEach(function(id){ var el = g(id); if (el) el.value = ''; });
+  ['f-tr','f-sd','f-st','f-ed','f-et','f-src'].forEach(function(id){ var el = g(id); if (el) el.value = ''; });
   ['chk1','chk2','chk3'].forEach(function(id){ var el = g(id); if (el) el.checked = false; });
   var cw = g('chk-warn'); if (cw) cw.style.display = 'none';
+  // Reset contactPref toggle
+  _contactPref = 'sms';
+  var cpEls = document.querySelectorAll('#contactPrefToggle .comm-opt');
+  cpEls.forEach(function(b){b.classList.remove('active');});
+  if (cpEls[0]) cpEls[0].classList.add('active');
+  // Reset comm toggle
   commPref = 'text';
-  document.querySelectorAll('.comm-opt').forEach(function(b){b.classList.remove('active');});
-  var first = document.querySelector('.comm-opt'); if (first) first.classList.add('active');
+  var commEls = document.querySelectorAll('#commToggle .comm-opt');
+  commEls.forEach(function(b){b.classList.remove('active');});
+  if (commEls[0]) commEls[0].classList.add('active');
+  // Reset add-ons
+  _customAddOns = [];
+  document.querySelectorAll('.addon-chk').forEach(function(c){c.checked = false;});
+  var cal = g('customAddOnsList'); if (cal) cal.innerHTML = '';
   var pc = g('priceCalc'); if (pc) pc.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div>';
   _lastCalcTid = '';
   _highestStepReached = 1;
@@ -588,7 +692,7 @@ function _applyDraftToForm(draft) {
   set('f-fn', f.fn); set('f-ln', f.ln); set('f-ph', f.ph);
   set('f-em', f.em); set('f-cy', f.cy); set('f-vh', f.vh);
   set('f-ld', f.ld); set('f-nt', f.nt);
-  set('f-tr', f.tr); set('f-sd', f.sd); set('f-ed', f.ed);
+  set('f-tr', f.tr); set('f-sd', f.sd); set('f-st', f.st); set('f-ed', f.ed); set('f-et', f.et);
   // Set deposit before calcPrice so _lastCalcTid sync works correctly
   if (f.dep) { var depEl = g('f-dep'); if (depEl) depEl.value = f.dep; }
   if (f.tr) _lastCalcTid = f.tr; // prevent calcPrice from resetting custom dep
@@ -598,19 +702,28 @@ function _applyDraftToForm(draft) {
       if (srcEl.options[i].value === f.src || srcEl.options[i].text === f.src) { srcEl.selectedIndex = i; break; }
     }
   }
+  // Restore contactPref toggle
+  _contactPref = f.contactPref || 'sms';
+  var cpEls = document.querySelectorAll('#contactPrefToggle .comm-opt');
+  cpEls.forEach(function(b){b.classList.remove('active');});
+  if (cpEls[_contactPref === 'email' ? 1 : 0]) cpEls[_contactPref === 'email' ? 1 : 0].classList.add('active');
+  // Restore comm toggle
   commPref = f.comm || 'text';
-  var commEls = document.querySelectorAll('.comm-opt');
+  var commEls = document.querySelectorAll('#commToggle .comm-opt');
   var commMap = {text:0, email:1, both:2};
   commEls.forEach(function(el){ el.classList.remove('active'); });
   var cIdx = commMap[commPref] !== undefined ? commMap[commPref] : 0;
   if (commEls[cIdx]) commEls[cIdx].classList.add('active');
+  // Restore custom add-ons
+  _customAddOns = (f.addOns && Array.isArray(f.addOns)) ? f.addOns.slice() : [];
+  renderCustomAddOns();
   if (draft.pricing) state.booking.pricing = draft.pricing;
   var step = Math.min(draft.step || 1, 3);
   if (step >= 2) {
-    state.booking.customer = {fn:f.fn, ln:f.ln, ph:f.ph, em:f.em, cy:f.cy, vh:f.vh, comm:f.comm||'text'};
+    state.booking.customer = {fn:f.fn, ln:f.ln, ph:f.ph, em:f.em, cy:f.cy, vh:f.vh, comm:f.comm||'text', contactPref:f.contactPref||'sms'};
   }
   if (step >= 3) {
-    state.booking.rental = {tid:f.tr, sd:f.sd, ed:f.ed, ld:f.ld, src:f.src, nt:f.nt};
+    state.booking.rental = {tid:f.tr, sd:f.sd, st:f.st||'', ed:f.ed, et:f.et||'', ld:f.ld, src:f.src, nt:f.nt};
     if (f.tr && f.sd && f.ed) { calcPrice(); drawBookSummary(); drawComboAssign(); }
   }
 }
@@ -629,7 +742,7 @@ function startNewDraft(notifId) {
     var draft = {
       id: newId, step: 1, createdAt: now, updatedAt: now,
       notificationId: notifId || null,
-      fields: {fn:'',ln:'',ph:'',em:'',cy:'',vh:'',comm:'text',tr:'',sd:'',ed:'',dep:'',ld:'',src:'',nt:''},
+      fields: {fn:'',ln:'',ph:'',em:'',cy:'',vh:'',comm:'text',contactPref:'sms',tr:'',sd:'',st:'',ed:'',et:'',dep:'',ld:'',src:'',nt:'',addOns:[]},
       pricing: null
     };
     idbPut('draft:' + newId, draft).catch(function(){});
@@ -681,8 +794,9 @@ function buildMessages(bk, trailer) {
   var sdFmt = new Date(bk.sd + 'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   var edFmt = new Date(bk.ed + 'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   var vhLine = (c.vh || '').trim() || 'please confirm year/make/model';
+  var daysDisp = bk.durationLabel || (Math.ceil(bk.days) + ' day' + (Math.ceil(bk.days)>1?'s':''));
   var packageMsg = 'Hi ' + c.fn + ' ' + c.ln + ', this is Frank with Iron G Equipment Co.\n' +
-    'Your ' + bk.trailer + ' reservation for ' + sdFmt + ' through ' + edFmt + ' (' + bk.days + ' day' + (bk.days>1?'s':'') + ') is being processed.\n\n' +
+    'Your ' + bk.trailer + ' reservation for ' + sdFmt + ' through ' + edFmt + ' (' + daysDisp + ') is being processed.\n\n' +
     'TOTAL: $' + bk.rental + ' rental + $' + bk.dep + ' refundable deposit hold = $' + bk.grand + ' total\n\n' +
     'To confirm your reservation please:\n' +
     '1. Reply with a photo of your driver\'s license\n' +
@@ -1306,8 +1420,9 @@ function createBookingFromNotif(id) {
       fields: {
         fn: nameParts[0]||'', ln: nameParts.slice(1).join(' ')||'',
         ph: n.phone||'', em: n.email||'', cy: n.city||'', vh: n.towVehicle||'',
-        comm: 'text', tr: trailerId, sd: n.startDate||'', ed: '',
-        dep: '', ld: n.hauling||'', src: n.referral||'', nt: n.notes||''
+        comm: 'text', contactPref: 'sms', tr: trailerId,
+        sd: n.startDate||'', st: '', ed: '', et: '',
+        dep: '', ld: n.hauling||'', src: n.referral||'', nt: n.notes||'', addOns: []
       },
       pricing: null
     };
