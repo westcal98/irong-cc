@@ -1,4 +1,4 @@
-var VER = '6.0';
+var VER = '7.0';
 var SCHEMA_VER = 1;
 var DB_NAME = 'ironGCC';
 var DB_STORE = 'state';
@@ -6,6 +6,10 @@ var LS_KEY = 'ironG_v3';
 var commPref = 'text';
 var db = null;
 var currentPage = 'dashboard';
+var _currentDraftId = null;
+var _currentDraftCreatedAt = null;
+var _highestStepReached = 1;
+var _lastCalcTid = '';
 
 function defaultState() {
   return {
@@ -19,7 +23,7 @@ function defaultState() {
 }
 var state = defaultState();
 
-// IDB helpers
+// ── IDB HELPERS ──────────────────────────────────────
 function openDB() {
   return new Promise(function(resolve, reject) {
     var req = indexedDB.open(DB_NAME, SCHEMA_VER);
@@ -71,6 +75,22 @@ function idbClear() {
     } catch(e) { resolve(); }
   });
 }
+function idbListPrefix(prefix, cb) {
+  if (!db) { cb([]); return; }
+  try {
+    var tx = db.transaction(DB_STORE, 'readonly');
+    var store = tx.objectStore(DB_STORE);
+    var range = IDBKeyRange.bound(prefix, prefix + '￿', false, false);
+    var req = store.openCursor(range);
+    var results = [];
+    req.onsuccess = function(e) {
+      var cursor = e.target.result;
+      if (cursor) { results.push({key: cursor.key, value: cursor.value}); cursor.continue(); }
+      else { cb(results); }
+    };
+    req.onerror = function() { cb(results); };
+  } catch(e) { cb([]); }
+}
 
 function save() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e) {}
@@ -80,87 +100,66 @@ function save() {
 function g(id) { return document.getElementById(id); }
 function gs(id, def) { var el = g(id); return el ? el.value.trim() || def : def; }
 
-// Clock (hidden element, kept for compat)
 setInterval(function() {
   var n = new Date(); var el = g('clock');
   if (el) el.textContent = n.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) + ' · ' + n.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
 }, 1000);
 
 // ── DRAWER ──────────────────────────────────────────
-function openDrawer() {
-  g('drawer').classList.add('open');
-  g('drawerOverlay').classList.add('open');
-}
-function closeDrawer() {
-  g('drawer').classList.remove('open');
-  g('drawerOverlay').classList.remove('open');
-}
-function navTo(id) {
-  closeDrawer();
-  showPage(id);
-}
-function fabNewBooking() {
-  showPage('new-booking');
-}
+function openDrawer() { g('drawer').classList.add('open'); g('drawerOverlay').classList.add('open'); }
+function closeDrawer() { g('drawer').classList.remove('open'); g('drawerOverlay').classList.remove('open'); }
+function navTo(id) { closeDrawer(); showPage(id); }
+
+function fabNewBooking() { startNewDraft(); }
 
 // ── NAVIGATION ──────────────────────────────────────
-var titles = {dashboard:'Dashboard',fleet:'Fleet Status','new-booking':'New Booking','active-rentals':'Active Rentals',messages:'Message Templates',agreement:'Rental Agreement',pricing:'Pricing Reference',history:'Rental History',settings:'Settings',notifications:'Notifications'};
+var titles = {
+  dashboard:'Dashboard', fleet:'Fleet Status', 'new-booking':'New Booking',
+  'active-rentals':'Active Rentals', messages:'Message Templates', agreement:'Rental Agreement',
+  pricing:'Pricing Reference', history:'Rental History', settings:'Settings',
+  notifications:'Notifications', drafts:'Drafts'
+};
 
 function showPage(id, skipPush) {
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
   var pg = g('page-' + id); if (pg) pg.classList.add('active');
-
   var tt = g('pageTitle'); if (tt) tt.textContent = titles[id] || id;
   currentPage = id;
-
   var bb = g('backBtn');
   if (bb) {
     if (id === 'dashboard') bb.classList.remove('visible');
     else bb.classList.add('visible');
   }
-
-  document.querySelectorAll('.drawer-item').forEach(function(el) {
-    el.classList.remove('active');
-  });
-  var drawerMap = {'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals','new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications'};
+  document.querySelectorAll('.drawer-item').forEach(function(el){ el.classList.remove('active'); });
+  var drawerMap = {
+    'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals',
+    'new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications',
+    'drafts':'dnav-drafts'
+  };
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
-
-  if (!skipPush) {
-    history.pushState({page: id}, '', '');
-  }
-
+  if (!skipPush) history.pushState({page: id}, '', '');
   window.scrollTo(0, 0);
-
   if (id === 'dashboard') drawDashboard();
   if (id === 'fleet') drawFleet();
   if (id === 'active-rentals') drawActiveRentals();
   if (id === 'history') drawHistory();
-  if (id === 'new-booking') {
-    drawAvail();
-    if (window._pendingBooking) populatePendingBooking();
-    else checkForDraft();
-  }
+  if (id === 'new-booking') drawAvail();
   if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); }
   if (id === 'messages') drawMessages();
   if (id === 'agreement') drawFullAgr();
   if (id === 'notifications') drawNotifications();
+  if (id === 'drafts') drawDrafts();
 }
 
-function goBack() {
-  history.back();
-}
+function goBack() { history.back(); }
 
 window.addEventListener('popstate', function(e) {
-  // Handle back within booking flow steps
   if (e.state && e.state.page === 'new-booking' && e.state.step && currentPage === 'new-booking') {
-    goStep(e.state.step, true);
-    return;
+    goStep(e.state.step, true); return;
   }
   var page = (e.state && e.state.page) ? e.state.page : 'dashboard';
-  if (!e.state) {
-    history.pushState({page: 'dashboard'}, '', '');
-  }
+  if (!e.state) history.pushState({page: 'dashboard'}, '', '');
   showPage(page, true);
 });
 
@@ -173,11 +172,27 @@ function setComm(val, el) {
 
 // ── PRICING ─────────────────────────────────────────
 function calcPrice() {
-  var tid = g('f-tr').value, sd = g('f-sd').value, ed = g('f-ed').value;
+  var tid = g('f-tr') ? g('f-tr').value : '';
+  var sd = g('f-sd') ? g('f-sd').value : '';
+  var ed = g('f-ed') ? g('f-ed').value : '';
   var r = doCalc(tid, sd, ed);
   var div = g('priceCalc');
-  if (!r) { div.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div>'; return; }
-  div.innerHTML = cpHtml(r);
+  if (!r) {
+    if (div) div.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div>';
+    return;
+  }
+  // Deposit override: reset to trailer default when trailer changes, else use input value
+  var depEl = g('f-dep');
+  if (depEl) {
+    if (tid !== _lastCalcTid) {
+      depEl.value = r.dep;
+      _lastCalcTid = tid;
+    } else {
+      var customDep = parseInt(depEl.value, 10);
+      if (!isNaN(customDep) && customDep >= 0) { r.dep = customDep; r.grand = r.total + customDep; }
+    }
+  }
+  if (div) div.innerHTML = cpHtml(r);
   state.booking.pricing = r;
 }
 
@@ -192,12 +207,10 @@ function doCalc(tid, sd, ed) {
     base = p.wk; type = 'Weekly rate (7 days)';
     breakdown.push({label:'Weekly rate', amount:p.wk});
   } else {
-    var d = new Date(s);
-    var wdCount = 0, weCount = 0;
+    var d = new Date(s); var wdCount = 0, weCount = 0;
     for (var i = 0; i < days; i++) {
       var dw = d.getDay();
-      if (dw===5||dw===6||dw===0) { weCount++; base += p.we; }
-      else { wdCount++; base += p.wd; }
+      if (dw===5||dw===6||dw===0) { weCount++; base += p.we; } else { wdCount++; base += p.wd; }
       d.setDate(d.getDate()+1);
     }
     type = days === 1 ? 'Daily rate' : days + '-day rate';
@@ -239,28 +252,29 @@ function goStep(n, fromHistory) {
     if (n === 3) {
       if (!g('f-tr').value || !g('f-sd').value || !g('f-ed').value) { alert('Please select trailer and dates.'); return; }
       state.booking.rental = {tid:g('f-tr').value, sd:g('f-sd').value, ed:g('f-ed').value, ld:g('f-ld') ? g('f-ld').value : '', src:g('f-src').value, nt:g('f-nt').value};
-      calcPrice();
-      drawBookSummary();
-      drawComboAssign();
+      calcPrice(); drawBookSummary(); drawComboAssign();
     }
   }
   for (var i = 1; i <= 4; i++) {
     var el = g('step'+i); if (el) el.style.display = i===n?'block':'none';
     var fs = g('fs'+i);
-    if (fs) { fs.classList.remove('active','done'); if (i<n) fs.classList.add('done'); if (i===n) fs.classList.add('active'); }
+    if (fs) { fs.classList.remove('active','done','reachable'); if (i<n) fs.classList.add('done'); if (i===n) fs.classList.add('active'); }
+  }
+  // Mark reachable tabs (can jump to them even when not 'done')
+  if (n > _highestStepReached) _highestStepReached = n;
+  for (var j = 1; j <= 4; j++) {
+    var fj = g('fs'+j);
+    if (fj && j <= _highestStepReached && j !== n && !fj.classList.contains('done')) fj.classList.add('reachable');
   }
   window.scrollTo(0, 0);
-  // Save draft and push step into browser history (not for step 4 — that's post-confirm)
   if (n < 4 && !fromHistory) {
     saveDraft(n);
     if (n > 1) history.pushState({ page: 'new-booking', step: n }, '', '');
   }
 }
 
-// Step tab click handler — allows backward navigation only
 function stepTabClick(n) {
-  var fs = g('fs'+n); if (!fs) return;
-  if (fs.classList.contains('done')) goStep(n);
+  if (n <= _highestStepReached) goStep(n);
 }
 
 function drawBookSummary() {
@@ -313,10 +327,8 @@ function confirmBooking() {
   var bk = {
     id: state.nextId++, c: c, trailer: t.name, tid: r.tid, sd: r.sd, ed: r.ed,
     days: p.days, rental: p.base, dep: p.dep, total: p.total, grand: p.grand,
-    combo: t.combo, load: r.ld, src: r.src,
-    status: 'docs_pending',
+    combo: t.combo, load: r.ld, src: r.src, status: 'docs_pending',
     nt: r.nt, at: new Date().toISOString(), breakdown: p.breakdown||[], type: p.type,
-    // Stripe fields
     paymentLinkUrl: null, paymentLinkId: null,
     depositIntentId: null, depositSessionId: null, depositSessionUrl: null, depositStatus: null,
     rentalPaid: false, depositHeld: false, docsVerified: false,
@@ -358,6 +370,8 @@ function onQuoteSent() {
     setGate(1, 'active', 'Awaiting signature');
     g('gate1').style.pointerEvents = '';
     addAct('Pre-booking package sent, awaiting docs', 'green');
+    var bk = findBookingById(state.booking.id);
+    if (bk) { bk.packageSentAt = new Date().toISOString(); bk.status = 'docs_pending'; save(); }
   } else {
     setGate(0, 'active', 'Send before agreement');
     setGate(1, 'locked', 'Locked — send package first');
@@ -370,7 +384,6 @@ function onAgrSigned() {
     setGate(1, 'done', 'Signed');
     setGate(2, 'active', 'Send payment links');
     g('gate2').style.pointerEvents = '';
-    // Render gate 2 Stripe sections
     var bk = findBookingById(state.booking.id);
     if (bk) drawGate2(bk);
     addAct('Rental agreement signed', 'green');
@@ -381,66 +394,45 @@ function onAgrSigned() {
 }
 
 function onPaymentConfirmed() {
-  var bk = findBookingById(state.booking.id);
-  if (!bk) return;
-  if (!bk.paymentLinkUrl || !bk.depositIntentId) {
-    alert('Generate both payment links first.'); return;
-  }
+  var bk = findBookingById(state.booking.id); if (!bk) return;
+  if (!bk.paymentLinkUrl || !bk.depositIntentId) { alert('Generate both payment links first.'); return; }
   setGate(2, 'done', 'Payment received');
   setGate(3, 'active', 'Send pickup instructions');
   setGate(4, 'active', 'Send day before return');
   g('gate3').style.pointerEvents = '';
   g('gate4').style.pointerEvents = '';
-  bk.rentalPaid = true;
-  bk.depositHeld = true;
-  bk.depositStatus = 'held';
-  bk.status = 'confirmed';
-  bk.confirmedAt = new Date().toISOString();
+  bk.rentalPaid = true; bk.depositHeld = true; bk.depositStatus = 'held';
+  bk.status = 'confirmed'; bk.confirmedAt = new Date().toISOString();
   save();
   addAct('Payment confirmed for ' + (state.booking.customer ? state.booking.customer.fn : 'customer'), 'green');
 }
 
-// ── STRIPE GATE 2 FUNCTIONS ──────────────────────────
-
+// ── STRIPE GATE 2 ────────────────────────────────────
 function drawGate2(bk) {
   var sa = g('gate2-rental-section'); var sb = g('gate2-deposit-section');
   if (!sa || !sb || !bk) return;
-
-  // Section A — Rental fee payment link
-  var aHtml = '<div class="stripe-section">' +
-    '<div class="stripe-section-label">💰 Rental Fee — $' + bk.rental + '</div>';
+  var aHtml = '<div class="stripe-section"><div class="stripe-section-label">💰 Rental Fee — $' + bk.rental + '</div>';
   if (bk.paymentLinkUrl) {
-    aHtml += '<input class="stripe-link-input" type="text" readonly value="' + bk.paymentLinkUrl + '">' +
-      '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
-        '<button class="btn btn-primary btn-sm" onclick="copyPayLink()">📋 Copy Link</button>' +
-        '<button class="btn btn-ghost btn-sm" onclick="textPayLink()">💬 Text to ' + escHtml(bk.c.ph) + '</button>' +
-      '</div>' +
+    aHtml += '<input class="stripe-link-input" type="text" readonly value="' + escHtml(bk.paymentLinkUrl) + '">' +
+      '<div style="display:flex;gap:8px;margin-bottom:6px;"><button class="btn btn-primary btn-sm" onclick="copyPayLink()">📋 Copy Link</button><button class="btn btn-ghost btn-sm" onclick="textPayLink()">💬 Text to ' + escHtml(bk.c.ph) + '</button></div>' +
       '<div class="stripe-sent">✓ Rental link generated</div>';
   } else {
     aHtml += '<button class="btn btn-primary" id="gen-pay-link-btn" onclick="generatePaymentLink()" style="width:100%;">🔗 Generate Rental Payment Link</button>';
   }
   aHtml += '</div>';
   sa.innerHTML = aHtml;
-
-  // Section B — Deposit authorization hold
-  var bHtml = '<div class="stripe-section">' +
-    '<div class="stripe-section-label">🔐 Deposit Authorization Hold — $' + bk.dep + '</div>';
+  var bHtml = '<div class="stripe-section"><div class="stripe-section-label">🔐 Deposit Authorization Hold — $' + bk.dep + '</div>';
   if (bk.depositSessionUrl) {
-    bHtml += '<input class="stripe-link-input" type="text" readonly value="' + bk.depositSessionUrl + '">' +
-      '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
-        '<button class="btn btn-primary btn-sm" onclick="copyDepLink()">📋 Copy Link</button>' +
-        '<button class="btn btn-ghost btn-sm" onclick="textDepLink()">💬 Text to ' + escHtml(bk.c.ph) + '</button>' +
-      '</div>' +
+    bHtml += '<input class="stripe-link-input" type="text" readonly value="' + escHtml(bk.depositSessionUrl) + '">' +
+      '<div style="display:flex;gap:8px;margin-bottom:6px;"><button class="btn btn-primary btn-sm" onclick="copyDepLink()">📋 Copy Link</button><button class="btn btn-ghost btn-sm" onclick="textDepLink()">💬 Text to ' + escHtml(bk.c.ph) + '</button></div>' +
       '<div class="stripe-sent">✓ Deposit link generated</div>' +
-      '<div class="stripe-note">ℹ️ This is an authorization hold only. No money is charged unless damage occurs.</div>';
+      '<div class="stripe-note">ℹ️ Authorization hold only — no charge unless damage occurs.</div>';
   } else {
     bHtml += '<button class="btn btn-primary" id="gen-dep-link-btn" onclick="generateDepositHold()" style="width:100%;margin-bottom:8px;">🔐 Generate Deposit Hold Link</button>' +
-      '<div class="stripe-note">ℹ️ This is an authorization hold only. No money is charged unless damage occurs.</div>';
+      '<div class="stripe-note">ℹ️ Authorization hold only — no charge unless damage occurs.</div>';
   }
   bHtml += '</div>';
   sb.innerHTML = bHtml;
-
-  // Enable/disable confirm button
   var confirmBtn = g('payConfirmBtn');
   if (confirmBtn) confirmBtn.disabled = !(bk.paymentLinkUrl && bk.depositIntentId);
 }
@@ -450,25 +442,12 @@ async function generatePaymentLink() {
   var btn = g('gen-pay-link-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
   try {
-    var res = await fetch('/stripe/payment-link', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        amount: bk.rental,
-        description: 'Iron G — ' + bk.days + '-day ' + bk.trailer + ' rental',
-        bookingId: bk.id
-      })
-    });
+    var res = await fetch('/stripe/payment-link', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({amount:bk.rental, description:'Iron G — '+bk.days+'-day '+bk.trailer+' rental', bookingId:bk.id}) });
     var data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
-    bk.paymentLinkUrl = data.url;
-    bk.paymentLinkId = data.id;
-    save();
-    drawGate2(bk);
-  } catch(e) {
-    alert('Error generating payment link: ' + e.message);
-    if (btn) { btn.disabled = false; btn.textContent = '🔗 Generate Rental Payment Link'; }
-  }
+    bk.paymentLinkUrl = data.url; bk.paymentLinkId = data.id; save(); drawGate2(bk);
+  } catch(e) { alert('Error generating payment link: ' + e.message); if (btn) { btn.disabled=false; btn.textContent='🔗 Generate Rental Payment Link'; } }
 }
 
 async function generateDepositHold() {
@@ -476,116 +455,67 @@ async function generateDepositHold() {
   var btn = g('gen-dep-link-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
   try {
-    var res = await fetch('/stripe/deposit-intent', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        amount: bk.dep,
-        description: 'Iron G deposit hold — ' + bk.trailer,
-        bookingId: bk.id
-      })
-    });
+    var res = await fetch('/stripe/deposit-intent', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({amount:bk.dep, description:'Iron G deposit hold — '+bk.trailer, bookingId:bk.id}) });
     var data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
-    bk.depositIntentId = data.paymentIntentId;
-    bk.depositSessionId = data.sessionId;
-    bk.depositSessionUrl = data.url;
-    bk.depositStatus = 'pending';
-    save();
-    drawGate2(bk);
-  } catch(e) {
-    alert('Error generating deposit hold: ' + e.message);
-    if (btn) { btn.disabled = false; btn.textContent = '🔐 Generate Deposit Hold Link'; }
-  }
+    bk.depositIntentId = data.paymentIntentId; bk.depositSessionId = data.sessionId;
+    bk.depositSessionUrl = data.url; bk.depositStatus = 'pending'; save(); drawGate2(bk);
+  } catch(e) { alert('Error generating deposit hold: ' + e.message); if (btn) { btn.disabled=false; btn.textContent='🔐 Generate Deposit Hold Link'; } }
 }
 
 function copyPayLink() {
   var bk = findBookingById(state.booking.id); if (!bk || !bk.paymentLinkUrl) return;
-  if (navigator.clipboard) { navigator.clipboard.writeText(bk.paymentLinkUrl).catch(function(){}); }
+  if (navigator.clipboard) navigator.clipboard.writeText(bk.paymentLinkUrl).catch(function(){});
   showToast('Payment link copied!');
 }
 function textPayLink() {
   var bk = findBookingById(state.booking.id); if (!bk || !bk.paymentLinkUrl) return;
-  var ph = bk.c.ph.replace(/\D/g,'');
-  var msg = 'Iron G Equipment Co. — Rental payment link for your ' + bk.trailer + ':\n' + bk.paymentLinkUrl;
-  window.location.href = 'sms:' + ph + '?body=' + encodeURIComponent(msg);
+  window.location.href = 'sms:' + bk.c.ph.replace(/\D/g,'') + '?body=' + encodeURIComponent('Iron G — Rental payment link for your ' + bk.trailer + ':\n' + bk.paymentLinkUrl);
 }
 function copyDepLink() {
   var bk = findBookingById(state.booking.id); if (!bk || !bk.depositSessionUrl) return;
-  if (navigator.clipboard) { navigator.clipboard.writeText(bk.depositSessionUrl).catch(function(){}); }
+  if (navigator.clipboard) navigator.clipboard.writeText(bk.depositSessionUrl).catch(function(){});
   showToast('Deposit link copied!');
 }
 function textDepLink() {
   var bk = findBookingById(state.booking.id); if (!bk || !bk.depositSessionUrl) return;
-  var ph = bk.c.ph.replace(/\D/g,'');
-  var msg = 'Iron G Equipment Co. — Deposit authorization link ($' + bk.dep + ' hold — refundable on clean return):\n' + bk.depositSessionUrl;
-  window.location.href = 'sms:' + ph + '?body=' + encodeURIComponent(msg);
+  window.location.href = 'sms:' + bk.c.ph.replace(/\D/g,'') + '?body=' + encodeURIComponent('Iron G — Deposit authorization link ($' + bk.dep + ' hold — refundable on clean return):\n' + bk.depositSessionUrl);
 }
 
-// Called when pre-booking package copy/SMS button is tapped — auto-checks Gate 0
 function packageSent(msgId, action) {
-  if (action === 'copy') {
-    copyEl(msgId);
-  } else {
-    openSMS(msgId);
-  }
+  if (action === 'copy') copyEl(msgId); else openSMS(msgId);
   var chk = g('quoteSent');
-  if (chk && !chk.checked) {
-    chk.checked = true;
-    onQuoteSent();
-  }
-  var bk = findBookingById(state.booking.id);
-  if (bk) {
-    bk.packageSentAt = new Date().toISOString();
-    bk.status = 'docs_pending';
-    save();
-  }
+  if (chk && !chk.checked) { chk.checked = true; onQuoteSent(); }
 }
 
-// ── DEPOSIT RELEASE / CAPTURE ──────────────────────
-
+// ── DEPOSIT RELEASE / CAPTURE ────────────────────────
 async function releaseDeposit(id) {
   var bk = findBookingById(id); if (!bk) return;
   if (!confirm('Release $' + bk.dep + ' deposit hold to ' + bk.c.fn + '?\n\nThe hold will drop from their card automatically.')) return;
   try {
-    var res = await fetch('/stripe/deposit-cancel', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ paymentIntentId: bk.depositIntentId })
-    });
+    var res = await fetch('/stripe/deposit-cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({paymentIntentId:bk.depositIntentId})});
     var data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
-    bk.depositStatus = 'released';
-    bk.status = 'complete';
+    bk.depositStatus = 'released'; bk.status = 'complete';
     state.rentals = state.rentals.filter(function(r){return r.id !== id;});
-    state.done.push(bk);
-    save(); updateStats(); drawActiveRentals(); drawDashboard();
+    state.done.push(bk); save(); updateStats(); drawActiveRentals(); drawDashboard();
     showToast('Deposit hold released ✓');
-  } catch(e) {
-    alert('Error releasing deposit: ' + e.message);
-  }
+  } catch(e) { alert('Error releasing deposit: ' + e.message); }
 }
 
 async function captureDeposit(id) {
   var bk = findBookingById(id); if (!bk) return;
   if (!confirm('Capture $' + bk.dep + ' deposit from ' + bk.c.fn + '?\n\nThis charges their card immediately.\nThis cannot be undone.')) return;
   try {
-    var res = await fetch('/stripe/deposit-capture', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ paymentIntentId: bk.depositIntentId })
-    });
+    var res = await fetch('/stripe/deposit-capture', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({paymentIntentId:bk.depositIntentId})});
     var data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
-    bk.depositStatus = 'captured';
-    bk.status = 'complete';
+    bk.depositStatus = 'captured'; bk.status = 'complete';
     state.rentals = state.rentals.filter(function(r){return r.id !== id;});
-    state.done.push(bk);
-    save(); updateStats(); drawActiveRentals(); drawDashboard();
+    state.done.push(bk); save(); updateStats(); drawActiveRentals(); drawDashboard();
     showToast('Deposit captured ✓');
-  } catch(e) {
-    alert('Error capturing deposit: ' + e.message);
-  }
+  } catch(e) { alert('Error capturing deposit: ' + e.message); }
 }
 
 function resolveManually(id) {
@@ -593,19 +523,28 @@ function resolveManually(id) {
   if (!confirm('Mark deposit as manually resolved for ' + bk.c.fn + '?')) return;
   bk.status = 'complete';
   state.rentals = state.rentals.filter(function(r){return r.id !== id;});
-  state.done.push(bk);
-  save(); updateStats(); drawActiveRentals(); drawDashboard();
+  state.done.push(bk); save(); updateStats(); drawActiveRentals(); drawDashboard();
   showToast('Booking marked complete ✓');
 }
 
-// ── DRAFT PERSISTENCE ────────────────────────────────
+// ── DRAFT SYSTEM ─────────────────────────────────────
 
-var _currentDraft = null;
+function loadAllDrafts(cb) {
+  idbListPrefix('draft:', function(items) {
+    var drafts = items.map(function(i){ return i.value; }).filter(Boolean);
+    drafts.sort(function(a,b){ return new Date(b.updatedAt||0) - new Date(a.updatedAt||0); });
+    cb(drafts);
+  });
+}
 
 function saveDraft(step) {
+  if (!_currentDraftId) return;
   var draft = {
+    id: _currentDraftId,
     step: step,
-    notifKey: window._pendingBookingNotifKey || null,
+    createdAt: _currentDraftCreatedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    notificationId: window._pendingBookingNotifKey ? window._pendingBookingNotifKey.id : null,
     fields: {
       fn: gs('f-fn',''), ln: gs('f-ln',''), ph: gs('f-ph',''),
       em: gs('f-em',''), cy: gs('f-cy',''), vh: gs('f-vh',''),
@@ -613,87 +552,117 @@ function saveDraft(step) {
       tr: g('f-tr') ? g('f-tr').value : '',
       sd: g('f-sd') ? g('f-sd').value : '',
       ed: g('f-ed') ? g('f-ed').value : '',
+      dep: g('f-dep') ? g('f-dep').value : '',
       ld: gs('f-ld',''), src: g('f-src') ? g('f-src').value : '',
       nt: gs('f-nt','')
     },
-    pricing: state.booking.pricing || null,
-    savedAt: new Date().toISOString()
+    pricing: state.booking.pricing || null
   };
-  idbPut('bookingDraft', draft).catch(function(){});
-}
-
-function loadDraft(cb) {
-  idbGet('bookingDraft').then(function(draft) {
-    if (!draft || !draft.savedAt) { cb(null); return; }
-    var age = Date.now() - new Date(draft.savedAt).getTime();
-    if (age > 86400000) { idbDelete('bookingDraft').catch(function(){}); cb(null); return; }
-    cb(draft);
-  }).catch(function() { cb(null); });
+  idbPut('draft:' + _currentDraftId, draft).catch(function(){});
 }
 
 function clearDraft() {
-  idbDelete('bookingDraft').catch(function(){});
-  _currentDraft = null;
+  if (_currentDraftId) idbDelete('draft:' + _currentDraftId).catch(function(){});
+  _currentDraftId = null;
+  _currentDraftCreatedAt = null;
 }
 
-function checkForDraft() {
-  loadDraft(function(draft) {
-    var b = g('draftBanner');
-    if (draft) { _currentDraft = draft; if (b) b.style.display = 'flex'; }
-    else { if (b) b.style.display = 'none'; }
-  });
+function _resetForm() {
+  state.booking = {};
+  ['f-fn','f-ln','f-ph','f-em','f-cy','f-vh','f-ld','f-nt','f-dep'].forEach(function(id){ var el = g(id); if (el) el.value = ''; });
+  ['f-tr','f-sd','f-ed','f-src'].forEach(function(id){ var el = g(id); if (el) el.value = ''; });
+  ['chk1','chk2','chk3'].forEach(function(id){ var el = g(id); if (el) el.checked = false; });
+  var cw = g('chk-warn'); if (cw) cw.style.display = 'none';
+  commPref = 'text';
+  document.querySelectorAll('.comm-opt').forEach(function(b){b.classList.remove('active');});
+  var first = document.querySelector('.comm-opt'); if (first) first.classList.add('active');
+  var pc = g('priceCalc'); if (pc) pc.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div>';
+  _lastCalcTid = '';
+  _highestStepReached = 1;
 }
 
-function resumeDraft() {
-  var draft = _currentDraft; if (!draft) return;
-  _currentDraft = null;
-  var b = g('draftBanner'); if (b) b.style.display = 'none';
-
-  newBooking();
-
-  var f = draft.fields;
-  var set = function(id, val) { var el = g(id); if (el && val !== undefined) el.value = val; };
+function _applyDraftToForm(draft) {
+  _resetForm();
+  var f = draft.fields || {};
+  var set = function(id, val) { var el = g(id); if (el && val) el.value = val; };
   set('f-fn', f.fn); set('f-ln', f.ln); set('f-ph', f.ph);
   set('f-em', f.em); set('f-cy', f.cy); set('f-vh', f.vh);
   set('f-ld', f.ld); set('f-nt', f.nt);
   set('f-tr', f.tr); set('f-sd', f.sd); set('f-ed', f.ed);
+  // Set deposit before calcPrice so _lastCalcTid sync works correctly
+  if (f.dep) { var depEl = g('f-dep'); if (depEl) depEl.value = f.dep; }
+  if (f.tr) _lastCalcTid = f.tr; // prevent calcPrice from resetting custom dep
   if (f.src) {
     var srcEl = g('f-src');
-    if (srcEl) {
-      for (var i = 0; i < srcEl.options.length; i++) {
-        if (srcEl.options[i].value === f.src || srcEl.options[i].text === f.src) { srcEl.selectedIndex = i; break; }
-      }
+    if (srcEl) for (var i = 0; i < srcEl.options.length; i++) {
+      if (srcEl.options[i].value === f.src || srcEl.options[i].text === f.src) { srcEl.selectedIndex = i; break; }
     }
   }
-  // Restore comm preference toggle
   commPref = f.comm || 'text';
   var commEls = document.querySelectorAll('.comm-opt');
   var commMap = {text:0, email:1, both:2};
   commEls.forEach(function(el){ el.classList.remove('active'); });
   var cIdx = commMap[commPref] !== undefined ? commMap[commPref] : 0;
   if (commEls[cIdx]) commEls[cIdx].classList.add('active');
-
-  if (draft.notifKey) window._pendingBookingNotifKey = draft.notifKey;
-
   if (draft.pricing) state.booking.pricing = draft.pricing;
-
-  // Go to saved step (cap at 3 — step 4 requires a confirmed booking)
-  var targetStep = Math.min(draft.step, 3);
-  if (targetStep >= 2) {
+  var step = Math.min(draft.step || 1, 3);
+  if (step >= 2) {
     state.booking.customer = {fn:f.fn, ln:f.ln, ph:f.ph, em:f.em, cy:f.cy, vh:f.vh, comm:f.comm||'text'};
   }
-  if (targetStep >= 3) {
+  if (step >= 3) {
     state.booking.rental = {tid:f.tr, sd:f.sd, ed:f.ed, ld:f.ld, src:f.src, nt:f.nt};
-    if (draft.pricing) { calcPrice(); drawBookSummary(); drawComboAssign(); }
+    if (f.tr && f.sd && f.ed) { calcPrice(); drawBookSummary(); drawComboAssign(); }
   }
-  goStep(targetStep, true);
 }
 
-function discardDraft() {
-  _currentDraft = null;
-  clearDraft();
-  newBooking();
+function startNewDraft(notifId) {
+  loadAllDrafts(function(drafts) {
+    if (drafts.length >= 10) {
+      showToast('Maximum drafts reached. Complete or delete a draft first.');
+      showPage('drafts'); return;
+    }
+    var now = new Date().toISOString();
+    var newId = Date.now();
+    _currentDraftId = newId;
+    _currentDraftCreatedAt = now;
+    _highestStepReached = 1;
+    var draft = {
+      id: newId, step: 1, createdAt: now, updatedAt: now,
+      notificationId: notifId || null,
+      fields: {fn:'',ln:'',ph:'',em:'',cy:'',vh:'',comm:'text',tr:'',sd:'',ed:'',dep:'',ld:'',src:'',nt:''},
+      pricing: null
+    };
+    idbPut('draft:' + newId, draft).catch(function(){});
+    _resetForm();
+    showPage('new-booking');
+    goStep(1, true);
+  });
 }
+
+function resumeDraftById(id) {
+  idbGet('draft:' + id).then(function(draft) {
+    if (!draft) { showToast('Draft not found.'); return; }
+    _currentDraftId = id;
+    _currentDraftCreatedAt = draft.createdAt || new Date().toISOString();
+    _highestStepReached = draft.step || 1;
+    _applyDraftToForm(draft);
+    if (draft.notificationId) {
+      window._pendingBookingNotifKey = { key: 'submission:' + draft.notificationId, id: draft.notificationId };
+    }
+    showPage('new-booking');
+    goStep(Math.min(draft.step || 1, 3), true);
+  }).catch(function() { showToast('Error loading draft.'); });
+}
+
+function discardDraftById(id) {
+  if (!confirm('Discard this draft?')) return;
+  idbDelete('draft:' + id).then(function() {
+    if (_currentDraftId === id) { _currentDraftId = null; _currentDraftCreatedAt = null; }
+    drawDrafts();
+  }).catch(function() { drawDrafts(); });
+}
+
+function newBooking() { startNewDraft(); }
 
 // ── MESSAGE GENERATION ───────────────────────────────
 function buildMessages(bk, trailer) {
@@ -709,11 +678,8 @@ function buildMessages(bk, trailer) {
   var tips = isHauler
     ? '⚠️ CAR HAULER TIPS:\n⚠️ Ensure vehicle is centered on deck and strapped at all 4 wheels\n⚠️ Max speed 55 mph when loaded\n⚠️ Secure ALL loads with ratchet straps — minimum 4 tie-down points\n⚠️ Check all straps after first 10 miles'
     : '⚠️ UTILITY TRAILER TIPS:\n⚠️ Load heavy items toward the FRONT (tongue end)\n⚠️ Max speed 55 mph when loaded\n⚠️ Secure ALL loads with straps — nothing loose\n⚠️ Check all tie-downs before every trip';
-
   var sdFmt = new Date(bk.sd + 'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   var edFmt = new Date(bk.ed + 'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
-
-  // Gate 0 — Pre-booking package message
   var vhLine = (c.vh || '').trim() || 'please confirm year/make/model';
   var packageMsg = 'Hi ' + c.fn + ' ' + c.ln + ', this is Frank with Iron G Equipment Co.\n' +
     'Your ' + bk.trailer + ' reservation for ' + sdFmt + ' through ' + edFmt + ' (' + bk.days + ' day' + (bk.days>1?'s':'') + ') is being processed.\n\n' +
@@ -725,31 +691,20 @@ function buildMessages(bk, trailer) {
     'Once received I\'ll send your payment links and you\'re all set.\n\n' +
     'Questions? Call/text ' + ph + '\n— Iron G Equipment Co.';
   var mq = g('msg-quote'); if (mq) mq.textContent = packageMsg;
-
-  // Gate 3 — Pickup confirmation messages
   var confText = '✅ ' + c.fn + ', payment confirmed! Here are your pickup details:\n\n🚛 ' + bk.trailer + '\n📍 ' + addr + '\n🔐 Combo lock code: ' + bk.combo + '\n   (Spin to your code, pull handle down to open)\n📅 Return by: ' + retDate + '\n\n' + tips + '\n\n📸 When returning: lock the coupler and text me a photo.\n\nQuestions? Call/text Frank: ' + phDot + '\n\nThanks for choosing Iron G! 🤙';
   var confEmail = 'Subject: Iron G Equipment Co. — Pickup Instructions #' + bk.id + '\n\nHi ' + c.fn + ',\n\nPayment received — you\'re all set! Here are your pickup details:\n\nTRAILER: ' + bk.trailer + '\nPICKUP: ' + addr + '\nCOMBO CODE: ' + bk.combo + '\n(Spin dials to ' + bk.combo + ', pull shackle down to open)\n\nRETURN DUE: ' + retDate + '\n\n' + tips + '\n\nRETURN INSTRUCTIONS:\n• Return to same storage space\n• Lock the coupler\n• Text a photo of locked coupler to ' + ph + '\n• Deposit released within 3 business days\n\nQuestions? ' + ph + ' | ' + em + '\n\nThank you!\nFrank Garza — Owner\n' + biz;
   var remText = 'Hey ' + c.fn + '! Quick reminder from Iron G — your trailer is due back TOMORROW.\n\n📍 Return to: ' + addr + '\n🔐 Lock the coupler and text me a return photo\n📅 Due: ' + retDate + '\n\nNeed more time? Text me ASAP.\n\n— Frank ' + phDot + ' · Iron G Equipment Co.';
   var mr = g('msg-reminder'); if (mr) mr.textContent = remText;
-
   var comm = c.comm || 'text';
-  var commDisp = g('commDisplay');
-  if (commDisp) commDisp.textContent = comm === 'text' ? '📱 Text' : comm === 'email' ? '📧 Email' : '📱 Text + 📧 Email';
+  var commDisp = g('commDisplay'); if (commDisp) commDisp.textContent = comm==='text'?'📱 Text':comm==='email'?'📧 Email':'📱 Text + 📧 Email';
   var cm = g('confirmMsgs');
   if (cm) {
     var html = '';
-    if (comm === 'text' || comm === 'both') {
-      html += '<div class="msg"><div class="msg-label">📱 Confirmation Text with Combo Code</div><div class="msg-text" id="msg-conf-txt">' + confText.replace(/</g,'&lt;') + '</div><div class="msg-actions"><button class="btn btn-primary btn-sm" onclick="copyEl(\'msg-conf-txt\')">📋 Copy Text</button><button class="btn btn-ghost btn-sm" onclick="openSMS(\'msg-conf-txt\')">📱 Open in Messages</button></div></div>';
-    }
-    if (comm === 'email' || comm === 'both') {
-      html += '<div class="msg"><div class="msg-label">📧 Confirmation Email with Combo Code</div><div class="msg-text" id="msg-conf-em">' + confEmail.replace(/</g,'&lt;') + '</div><div class="msg-actions"><button class="btn btn-primary btn-sm" onclick="copyEl(\'msg-conf-em\')">📋 Copy Email</button></div></div>';
-    }
+    if (comm==='text'||comm==='both') html += '<div class="msg"><div class="msg-label">📱 Confirmation Text with Combo Code</div><div class="msg-text" id="msg-conf-txt">' + confText.replace(/</g,'&lt;') + '</div><div class="msg-actions"><button class="btn btn-primary btn-sm" onclick="copyEl(\'msg-conf-txt\')">📋 Copy Text</button><button class="btn btn-ghost btn-sm" onclick="openSMS(\'msg-conf-txt\')">📱 Open in Messages</button></div></div>';
+    if (comm==='email'||comm==='both') html += '<div class="msg"><div class="msg-label">📧 Confirmation Email with Combo Code</div><div class="msg-text" id="msg-conf-em">' + confEmail.replace(/</g,'&lt;') + '</div><div class="msg-actions"><button class="btn btn-primary btn-sm" onclick="copyEl(\'msg-conf-em\')">📋 Copy Email</button></div></div>';
     cm.innerHTML = html;
   }
-
   var ap = g('agreementPreview'); if (ap) ap.innerHTML = makeAgrHTML(bk, biz, ph, em);
-
-  // Initialize Gate 2 Stripe sections
   drawGate2(bk);
 }
 
@@ -767,36 +722,19 @@ function makeAgrHTML(bk, biz, ph, em) {
     '<p><strong>Trailer:</strong> ' + bk.trailer + '</p>' +
     '<p><strong>Start:</strong> ' + bk.sd + ' &nbsp; <strong>Return Due:</strong> ' + bk.ed + '</p>' +
     '<p><strong>Rental:</strong> $' + bk.rental + ' &nbsp; <strong>Deposit:</strong> $' + bk.dep + ' &nbsp; <strong>Total:</strong> $' + bk.grand + '</p>' +
-    '<p><strong>Total Charged:</strong> $' + bk.grand + '</p>' +
     '<h3>2. Key Terms</h3>' +
     '<p><strong>2.1</strong> Valid drivers license and proof of towing insurance required at pickup.</p>' +
     '<p><strong>2.2</strong> Renter is solely responsible for ensuring their tow vehicle meets minimum towing requirements.</p>' +
     '<p><strong>2.3 Contactless Pickup.</strong> Renter acknowledges combo code was delivered via text/email and accepts full responsibility from code delivery until return photo received by Iron G Equipment Co. LLC.</p>' +
     '<p><strong>2.4 Return.</strong> Return to storage by due date, lock coupler, text photo to ' + ph + '. Late returns charged at daily rate.</p>' +
     '<p><strong>2.5</strong> Renter agrees not to exceed GVWR, not to sub-rent or loan the trailer, and to comply with all Oklahoma towing laws.</p>' +
-    '<p><strong>2.6</strong> Renter responsible for all damage beyond normal wear. Security deposit will be applied toward repair costs. If repairs exceed deposit, remaining balance charged to card on file.</p>' +
+    '<p><strong>2.6</strong> Renter responsible for all damage beyond normal wear. Security deposit applied toward repair costs. If repairs exceed deposit, remaining balance charged to card on file.</p>' +
     '<p><strong>2.7</strong> Deposit released within 3 business days of satisfactory return. Trailer equipped with GPS tracking.</p>' +
     '<p><strong>2.8</strong> This agreement is governed by the laws of the State of Oklahoma.</p>' +
     '<h3>3. Signatures</h3>' +
     '<p>Renter Signature: _____________________________ &nbsp; Date: ____________</p>' +
     '<p style="margin-top:14px;">' + biz + ' — Frank Garza, Owner &nbsp; Date: ____________</p>' +
     '<div style="margin-top:12px;font-size:10px;color:#aaa;text-align:center;">' + biz + ' · Yukon, OK · ' + ph + ' · ' + em + '</div>';
-}
-
-function newBooking() {
-  state.booking = {};
-  var flds = ['f-fn','f-ln','f-ph','f-em','f-cy','f-vh','f-ld','f-nt'];
-  flds.forEach(function(id){ var el = g(id); if (el) el.value = ''; });
-  ['f-tr','f-sd','f-ed','f-src'].forEach(function(id){ var el = g(id); if (el) el.value = ''; });
-  ['chk1','chk2','chk3'].forEach(function(id){ var el = g(id); if (el) el.checked = false; });
-  var cw = g('chk-warn'); if (cw) cw.style.display = 'none';
-  commPref = 'text';
-  document.querySelectorAll('.comm-opt').forEach(function(b){b.classList.remove('active');});
-  var first = document.querySelector('.comm-opt'); if (first) first.classList.add('active');
-  var pc = g('priceCalc'); if (pc) pc.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div>';
-  var db = g('draftBanner'); if (db) db.style.display = 'none';
-  clearDraft();
-  goStep(1, true);
 }
 
 function markReturned(id) {
@@ -847,37 +785,31 @@ function findBookingById(id) {
   return null;
 }
 
-function escHtml(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function showToast(msg) {
   var t = g('toast');
   if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
-  t.textContent = msg;
-  t.className = 'toast-visible';
+  t.textContent = msg; t.className = 'toast-visible';
   clearTimeout(window._toastTimer);
   window._toastTimer = setTimeout(function(){ t.className = ''; }, 2500);
 }
 
 function saveSettings() {
   state.settings = {
-    biz: gs('s-biz','Iron G Equipment Co. LLC'),
-    own: gs('s-own','Frank Garza'),
-    ph: gs('s-ph','(405) 393-4161'),
-    em: gs('s-em','info@irongequipment.com'),
-    addr: gs('s-addr','16245 W HWY 66, Yukon OK 73099'),
-    ca: gs('s-ca',''), vm: gs('s-vm',''), sq: gs('s-sq','')
+    biz:gs('s-biz','Iron G Equipment Co. LLC'), own:gs('s-own','Frank Garza'),
+    ph:gs('s-ph','(405) 393-4161'), em:gs('s-em','info@irongequipment.com'),
+    addr:gs('s-addr','16245 W HWY 66, Yukon OK 73099'),
+    ca:gs('s-ca',''), vm:gs('s-vm',''), sq:gs('s-sq','')
   };
-  save();
-  addAct('Settings saved','green');
-  alert('Settings saved!');
+  save(); addAct('Settings saved','green'); alert('Settings saved!');
 }
 
 function resetData() {
   if (!confirm('Remove ALL data including bookings, rentals, history, and settings?\n\nThis cannot be undone.')) return;
   try { localStorage.removeItem(LS_KEY); } catch(e) {}
   idbClear().catch(function(){});
-  state = defaultState();
-  save(); updateStats(); drawDashboard(); drawFleet();
+  state = defaultState(); save(); updateStats(); drawDashboard(); drawFleet();
   alert('All data cleared.'); showPage('dashboard');
 }
 
@@ -890,8 +822,7 @@ function exportBackup() {
 }
 
 function importBackup() {
-  var input = document.createElement('input');
-  input.type = 'file'; input.accept = '.json';
+  var input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
   input.onchange = function(e) {
     var file = e.target.files[0]; if (!file) return;
     var reader = new FileReader();
@@ -919,10 +850,9 @@ function updateStorageUsage() {
   try { var raw = localStorage.getItem(LS_KEY); if (raw) lsBytes = new Blob([raw]).size; } catch(e) {}
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then(function(est) {
-      var usedKB = Math.round((est.usage||0)/1024);
-      var quotaMB = Math.round((est.quota||0)/1024/1024);
+      var usedKB = Math.round((est.usage||0)/1024); var quotaMB = Math.round((est.quota||0)/1024/1024);
       div.innerHTML = 'Data: ~' + Math.round(lsBytes/1024) + ' KB &nbsp;·&nbsp; Browser storage: ' + usedKB + ' KB / ' + quotaMB + ' MB quota';
-    }).catch(function() { div.innerHTML = '~' + Math.round(lsBytes/1024) + ' KB in localStorage'; });
+    }).catch(function(){ div.innerHTML = '~' + Math.round(lsBytes/1024) + ' KB in localStorage'; });
   } else { div.innerHTML = '~' + Math.round(lsBytes/1024) + ' KB in localStorage'; }
 }
 
@@ -935,7 +865,7 @@ function drawFleet() {
       h += '<div class="fleet-card ' + t.status + '">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;"><div class="fc-name">' + t.name + '</div><span class="badge b-' + t.status + '">' + (t.status==='available'?'✓ Available':'⚡ Rented') + '</span></div>' +
         (t.status==='available'
-          ? '<div class="fc-label">Current Combo Code</div><div class="fc-combo">' + t.combo + '</div><div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="showPage(\'new-booking\')">+ Book This Trailer</button></div>'
+          ? '<div class="fc-label">Current Combo Code</div><div class="fc-combo">' + t.combo + '</div><div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="startNewDraft()">+ Book This Trailer</button></div>'
           : '<div class="fc-renter">Rented to: <strong>' + t.renter + '</strong></div><div class="fc-renter">Due: <strong>' + t.returnDate + '</strong></div><div class="fc-label" style="margin-top:10px;">Active Combo</div><div class="fc-combo">' + t.combo + '</div><div style="margin-top:10px;"><button class="btn btn-success btn-sm" onclick="markRetByTrailer(\'' + t.id + '\')">✓ Mark Returned</button></div>'
         ) + '</div>';
     });
@@ -960,33 +890,23 @@ function drawFleet() {
 function drawActiveRentals() {
   var container = g('activeBody'); if (!container) return;
   if (!state.rentals.length) {
-    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No active rentals.<br><br><button class="btn btn-primary" onclick="showPage(\'new-booking\')">+ New Booking</button></div>';
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No active rentals.<br><br><button class="btn btn-primary" onclick="startNewDraft()">+ New Booking</button></div>';
     return;
   }
-
   var statusLabels = {
-    'docs_pending':    {cls:'b-pending',  text:'DOCS PENDING'},
-    'payment_pending': {cls:'b-rented',   text:'PAYMENT PENDING'},
-    'confirmed':       {cls:'b-available',text:'CONFIRMED'},
-    'active':          {cls:'b-rented',   text:'OUT'},
-    'returned':        {cls:'b-returned', text:'RETURNED'},
-    'cancelled':       {cls:'b-overdue',  text:'CANCELLED'}
+    'docs_pending':{cls:'b-pending',text:'DOCS PENDING'}, 'payment_pending':{cls:'b-rented',text:'PAYMENT PENDING'},
+    'confirmed':{cls:'b-available',text:'CONFIRMED'}, 'active':{cls:'b-rented',text:'OUT'},
+    'returned':{cls:'b-returned',text:'RETURNED'}, 'cancelled':{cls:'b-overdue',text:'CANCELLED'}
   };
-
   var h = '<div style="font-family:Oswald,sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + state.rentals.length + ' booking' + (state.rentals.length>1?'s':'') + '</div>';
-
   state.rentals.forEach(function(r){
     var sl = statusLabels[r.status] || {cls:'b-pending', text:(r.status||'IN PROGRESS').toUpperCase()};
     var dl = Math.ceil((new Date(r.ed+'T12:00:00')-new Date())/86400000);
-
     h += '<div class="rental-card">' +
-      '<div class="rental-card-header">' +
-        '<div><div class="rental-name">' + escHtml(r.c.fn) + ' ' + escHtml(r.c.ln) + '</div><div class="rental-phone">' + escHtml(r.c.ph) + '</div></div>' +
-        '<span class="badge ' + sl.cls + '">' + sl.text + '</span>' +
-      '</div>' +
+      '<div class="rental-card-header"><div><div class="rental-name">' + escHtml(r.c.fn) + ' ' + escHtml(r.c.ln) + '</div><div class="rental-phone">' + escHtml(r.c.ph) + '</div></div>' +
+      '<span class="badge ' + sl.cls + '">' + sl.text + '</span></div>' +
       '<div class="rental-field"><span class="rental-label">Trailer</span><span class="rental-value">' + escHtml(r.trailer) + '</span></div>' +
       '<div class="rental-field"><span class="rental-label">Dates</span><span class="rental-value">' + r.sd + ' → ' + r.ed + '</span></div>';
-
     if (r.status === 'active') {
       var bc = dl<=0?'b-overdue':dl===1?'b-pending':'b-available';
       var bt = dl<=0?'OVERDUE':dl===1?'DUE TOMORROW':r.days+'-DAY RENTAL';
@@ -1006,34 +926,56 @@ function drawActiveRentals() {
       }
       h += '</div>';
     } else {
-      // docs_pending, payment_pending, confirmed
       h += '<div class="rental-field"><span class="rental-label">Amount</span><span class="rental-value">$' + r.total + ' <span style="color:var(--muted);font-weight:400;">+$' + r.dep + ' dep</span></span></div>';
     }
-
     h += '</div>';
   });
-
   container.innerHTML = h;
+}
+
+function drawDrafts() {
+  var container = g('draftsBody'); if (!container) return;
+  container.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Loading...</div>';
+  loadAllDrafts(function(drafts) {
+    if (!drafts.length) {
+      container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No saved drafts.</div>';
+      return;
+    }
+    var h = '<div style="font-family:Oswald,sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + drafts.length + ' draft' + (drafts.length>1?'s':'') + '</div>';
+    drafts.forEach(function(d) {
+      var f = d.fields || {};
+      var name = ((f.fn||'') + ' ' + (f.ln||'')).trim() || 'New Booking';
+      var trailerLabel = f.tr === 'utility' ? '7x18 Utility Trailer' : f.tr === 'hauler' ? '7x18 Car Hauler' : 'Not selected';
+      var sd = f.sd || 'No date';
+      var edited = relativeTime(d.updatedAt);
+      h += '<div class="rental-card">' +
+        '<div class="rental-card-header">' +
+          '<div><div class="rental-name">' + escHtml(name) + '</div><div class="rental-phone">Step ' + (d.step||1) + ' · Edited ' + edited + '</div></div>' +
+          '<span class="badge b-pending">DRAFT</span>' +
+        '</div>' +
+        '<div class="rental-field"><span class="rental-label">Trailer</span><span class="rental-value">' + escHtml(trailerLabel) + '</span></div>' +
+        '<div class="rental-field"><span class="rental-label">Start Date</span><span class="rental-value">' + escHtml(sd) + '</span></div>' +
+        '<div class="rental-actions">' +
+          '<button class="btn btn-primary btn-sm" onclick="resumeDraftById(' + d.id + ')">Resume</button>' +
+          '<button class="btn btn-danger btn-sm" onclick="discardDraftById(' + d.id + ')">Discard</button>' +
+        '</div>' +
+        '</div>';
+    });
+    container.innerHTML = h;
+  });
 }
 
 function drawHistory() {
   var container = g('histBody'); if (!container) return;
   var all = state.done.slice().reverse();
   var hs = g('histStats');
-  if (!all.length) {
-    if (hs) hs.textContent = '';
-    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No completed rentals yet.</div>';
-    return;
-  }
+  if (!all.length) { if (hs) hs.textContent = ''; container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No completed rentals yet.</div>'; return; }
   var rev = 0; all.forEach(function(r){rev += r.rental + (r.wt||0);});
   if (hs) hs.textContent = all.length + ' rentals · $' + rev + ' total revenue';
   var h = '';
   all.forEach(function(r){
     h += '<div class="rental-card">' +
-      '<div class="rental-card-header">' +
-        '<div><div class="rental-name">' + escHtml(r.c.fn) + ' ' + escHtml(r.c.ln) + '</div><div class="rental-phone">#' + r.id + (r.src ? ' · ' + escHtml(r.src) : '') + '</div></div>' +
-        '<span class="badge b-returned">Returned</span>' +
-      '</div>' +
+      '<div class="rental-card-header"><div><div class="rental-name">' + escHtml(r.c.fn) + ' ' + escHtml(r.c.ln) + '</div><div class="rental-phone">#' + r.id + (r.src?' · '+escHtml(r.src):'') + '</div></div><span class="badge b-returned">Returned</span></div>' +
       '<div class="rental-field"><span class="rental-label">Trailer</span><span class="rental-value">' + escHtml(r.trailer) + '</span></div>' +
       '<div class="rental-field"><span class="rental-label">Dates</span><span class="rental-value">' + r.sd + ' → ' + r.ed + '</span></div>' +
       '<div class="rental-field"><span class="rental-label">Duration</span><span class="rental-value">' + r.days + ' day' + (r.days>1?'s':'') + '</span></div>' +
@@ -1094,8 +1036,7 @@ function drawFullAgr() {
   div.innerHTML = '<h2>' + biz + '</h2>' +
     '<p style="text-align:center;font-size:11px;color:#666;">Trailer Rental Agreement · ' + ph + ' · ' + em + '</p>' +
     '<div style="height:1px;background:#ddd;margin:10px 0;"></div>' +
-    '<h3>1. Rental Information</h3>' +
-    '<p>Renter Name: _________________________________</p>' +
+    '<h3>1. Rental Information</h3><p>Renter Name: _________________________________</p>' +
     '<p>Phone: __________________ Email: ____________________________</p>' +
     '<p>Drivers License #: ______________________ State: ______</p>' +
     '<p>Tow Vehicle: ____________________________________________</p>' +
@@ -1111,8 +1052,7 @@ function drawFullAgr() {
     '<p><strong>2.6</strong> Renter responsible for all damage beyond normal wear. Security deposit applied toward repair costs. Remaining balance charged to card on file if repairs exceed deposit.</p>' +
     '<p><strong>2.7</strong> Deposit released within 3 business days of satisfactory return. Trailer equipped with GPS tracking.</p>' +
     '<p><strong>2.8</strong> Governed by laws of the State of Oklahoma. Venue: Canadian County, Oklahoma.</p>' +
-    '<h3>3. Signatures</h3>' +
-    '<p>Renter Signature: ______________________________ Date: ____________</p>' +
+    '<h3>3. Signatures</h3><p>Renter Signature: ______________________________ Date: ____________</p>' +
     '<p style="margin-top:14px;">' + biz + ' — Frank Garza, Owner &nbsp; Date: ____________</p>' +
     '<div style="margin-top:12px;font-size:10px;color:#aaa;text-align:center;">' + biz + ' · Yukon, OK · ' + ph + ' · ' + em + '</div>';
 }
@@ -1176,39 +1116,20 @@ function drawDashboard() {
 
 // ── INIT ─────────────────────────────────────────────
 async function initApp() {
-  if (navigator.storage && navigator.storage.persist) {
-    navigator.storage.persist().then(function(granted) {
-      console.log('[IronG CC] Persistent storage:', granted);
-    });
-  }
-  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js'); }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(function(g){ console.log('[IronG CC] Persistent storage:', g); });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
   try { db = await openDB(); } catch(e) { console.warn('[IronG CC] IDB unavailable:', e); }
 
   var lsData = null;
-  try {
-    var raw = localStorage.getItem(LS_KEY);
-    if (raw) { var parsed = JSON.parse(raw); if (parsed && parsed.fleet && parsed.fleet.length >= 2) lsData = parsed; }
-  } catch(e) {}
-
+  try { var raw = localStorage.getItem(LS_KEY); if (raw) { var parsed = JSON.parse(raw); if (parsed && parsed.fleet && parsed.fleet.length >= 2) lsData = parsed; } } catch(e) {}
   var idbData = null;
   if (!lsData) {
     try { idbData = await idbGet('state'); } catch(e) {}
     if (idbData && (!idbData.fleet || idbData.fleet.length < 2)) idbData = null;
   }
-
-  if (lsData) {
-    state = lsData;
-    idbPut('state', state).catch(function(){});
-    console.log('[IronG CC] Init complete — loaded ' + (state.rentals.length + state.done.length) + ' items');
-  } else if (idbData) {
-    state = idbData;
-    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e) {}
-    console.log('[IronG CC] Init complete — loaded ' + (state.rentals.length + state.done.length) + ' items');
-  } else {
-    state = defaultState();
-    console.log('[IronG CC] First install — seeding defaults');
-    save();
-  }
+  if (lsData) { state = lsData; idbPut('state', state).catch(function(){}); console.log('[IronG CC] Loaded ' + (state.rentals.length + state.done.length) + ' items'); }
+  else if (idbData) { state = idbData; try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e) {} console.log('[IronG CC] Loaded ' + (state.rentals.length + state.done.length) + ' items'); }
+  else { state = defaultState(); console.log('[IronG CC] First install — seeding defaults'); save(); }
 
   if (state.settings) {
     var smap = {'s-biz':'biz','s-own':'own','s-ph':'ph','s-em':'em','s-addr':'addr','s-ca':'ca','s-vm':'vm','s-sq':'sq'};
@@ -1217,17 +1138,9 @@ async function initApp() {
 
   var today = new Date().toISOString().split('T')[0];
   ['f-sd','f-ed','qc-sd','qc-ed'].forEach(function(id){ var el = g(id); if (el) el.setAttribute('min',today); });
-
   history.replaceState({page: 'dashboard'}, '', '');
-
-  updateStats();
-  drawDashboard();
-  drawFleet();
-  showPage('dashboard', true);
-
-  fetchNotifications();
-  setInterval(fetchNotifications, 60000);
-
+  updateStats(); drawDashboard(); drawFleet(); showPage('dashboard', true);
+  fetchNotifications(); setInterval(fetchNotifications, 60000);
   initPushNotifications();
 }
 
@@ -1237,20 +1150,16 @@ var notifBadgeCount = 0;
 
 async function fetchNotifications() {
   try {
-    var res = await fetch('/notifications?handled=false');
-    if (!res.ok) return;
+    var res = await fetch('/notifications?handled=false'); if (!res.ok) return;
     notifications = await res.json();
     notifBadgeCount = Array.isArray(notifications) ? notifications.length : 0;
     updateNotifBadge();
     if (currentPage === 'notifications') drawNotifications();
-  } catch(e) {
-    console.error('[IronG] fetchNotifications error:', e);
-  }
+  } catch(e) { console.error('[IronG] fetchNotifications error:', e); }
 }
 
 function updateNotifBadge() {
-  var hb = g('notifHeaderBadge');
-  var db = g('drawerNotifBadge');
+  var hb = g('notifHeaderBadge'); var db = g('drawerNotifBadge');
   if (hb) { hb.textContent = notifBadgeCount; hb.style.display = notifBadgeCount > 0 ? 'inline-flex' : 'none'; }
   if (db) { db.textContent = notifBadgeCount; db.style.display = notifBadgeCount > 0 ? 'inline-flex' : 'none'; }
 }
@@ -1267,9 +1176,7 @@ function relativeTime(iso) {
 }
 
 function toggleNotifDetail(id) {
-  var el = g('nd-' + id);
-  var btn = g('ndb-' + id);
-  if (!el) return;
+  var el = g('nd-' + id); var btn = g('ndb-' + id); if (!el) return;
   var open = el.style.display !== 'none';
   el.style.display = open ? 'none' : 'block';
   if (btn) btn.textContent = open ? 'View Details' : 'Hide Details';
@@ -1277,63 +1184,43 @@ function toggleNotifDetail(id) {
 
 async function markHandled(key, id) {
   try {
-    var res = await fetch('/notifications/handled', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: key }),
-    });
+    var res = await fetch('/notifications/handled', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:key})});
     if (!res.ok) { console.error('[IronG] markHandled failed'); return; }
-    notifications = notifications.filter(function(n) { return n.id !== id; });
-    notifBadgeCount = notifications.length;
-    updateNotifBadge();
-    drawNotifications();
-  } catch(e) {
-    console.error('[IronG] markHandled error:', e);
-  }
+    notifications = notifications.filter(function(n){ return n.id !== id; });
+    notifBadgeCount = notifications.length; updateNotifBadge(); drawNotifications();
+  } catch(e) { console.error('[IronG] markHandled error:', e); }
 }
 
 function notifDetailRow(label, val) {
-  return '<div class="notif-field"><span class="notif-label">' + label + '</span><span class="notif-value">' + (val || '—') + '</span></div>';
+  return '<div class="notif-field"><span class="notif-label">' + label + '</span><span class="notif-value">' + (val||'—') + '</span></div>';
 }
 
 function drawNotifications() {
-  var container = g('notifBody');
-  if (!container) return;
-  if (!notifications.length) {
-    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No new requests. You\'re all caught up.</div>';
-    return;
-  }
-  var h = '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + notifications.length + ' unhandled request' + (notifications.length > 1 ? 's' : '') + '</div>';
+  var container = g('notifBody'); if (!container) return;
+  if (!notifications.length) { container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No new requests. You\'re all caught up.</div>'; return; }
+  var h = '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + notifications.length + ' unhandled request' + (notifications.length>1?'s':'') + '</div>';
   notifications.forEach(function(n) {
     var isRental = n.type === 'rental';
     h += '<div class="notif-card">' +
       '<div class="notif-card-header">' +
-        '<span class="notif-type-badge ' + (isRental ? 'ntb-rental' : 'ntb-info') + '">' + (isRental ? 'RENTAL' : 'INFO') + '</span>' +
-        '<div class="notif-name">' + (n.name || '—') + '</div>' +
+        '<span class="notif-type-badge ' + (isRental?'ntb-rental':'ntb-info') + '">' + (isRental?'RENTAL':'INFO') + '</span>' +
+        '<div class="notif-name">' + (n.name||'—') + '</div>' +
         '<div class="notif-meta">' + relativeTime(n.receivedAt) + '</div>' +
       '</div>' +
       '<div class="notif-quick">' +
-        '<div class="notif-field"><span class="notif-label">Phone</span><a class="notif-phone" href="tel:' + (n.phone || '').replace(/\D/g, '') + '">' + (n.phone || '—') + '</a></div>' +
-        '<div class="notif-field"><span class="notif-label">Trailer</span><span class="notif-value">' + (n.trailer || '—') + '</span></div>' +
-        '<div class="notif-field"><span class="notif-label">Start Date</span><span class="notif-value">' + (n.startDate || '—') + '</span></div>' +
+        '<div class="notif-field"><span class="notif-label">Phone</span><a class="notif-phone" href="tel:' + (n.phone||'').replace(/\D/g,'') + '">' + (n.phone||'—') + '</a></div>' +
+        '<div class="notif-field"><span class="notif-label">Trailer</span><span class="notif-value">' + (n.trailer||'—') + '</span></div>' +
+        '<div class="notif-field"><span class="notif-label">Start Date</span><span class="notif-value">' + (n.startDate||'—') + '</span></div>' +
       '</div>' +
       '<div class="notif-detail" id="nd-' + n.id + '" style="display:none;">' +
         '<div style="height:1px;background:#1a1a1a;margin:12px 0;"></div>' +
-        notifDetailRow('Name', n.name) +
-        notifDetailRow('Phone', n.phone) +
-        notifDetailRow('Email', n.email) +
-        notifDetailRow('City', n.city) +
-        notifDetailRow('Trailer', n.trailer) +
-        notifDetailRow('Start Date', n.startDate) +
-        notifDetailRow('Duration', n.duration) +
-        notifDetailRow('Tow Vehicle', n.towVehicle) +
-        notifDetailRow('Hauling', n.hauling) +
-        notifDetailRow('Referral', n.referral) +
-        notifDetailRow('Notes', n.notes) +
-        notifDetailRow('Source', n.source) +
-        notifDetailRow('Submitted', n.timestamp) +
-        notifDetailRow('Received', n.receivedAt) +
-        notifDetailRow('Email Sent', n.emailSent ? 'Yes' : 'No') +
+        notifDetailRow('Name',n.name) + notifDetailRow('Phone',n.phone) + notifDetailRow('Email',n.email) +
+        notifDetailRow('City',n.city) + notifDetailRow('Trailer',n.trailer) + notifDetailRow('Start Date',n.startDate) +
+        notifDetailRow('Duration',n.duration) + notifDetailRow('Tow Vehicle',n.towVehicle) +
+        notifDetailRow('Hauling',n.hauling) + notifDetailRow('Referral',n.referral) +
+        notifDetailRow('Notes',n.notes) + notifDetailRow('Source',n.source) +
+        notifDetailRow('Submitted',n.timestamp) + notifDetailRow('Received',n.receivedAt) +
+        notifDetailRow('Email Sent',n.emailSent?'Yes':'No') +
       '</div>' +
       '<div class="notif-actions">' +
         '<button class="btn btn-ghost btn-sm" id="ndb-' + n.id + '" onclick="toggleNotifDetail(' + n.id + ')">View Details</button>' +
@@ -1345,78 +1232,49 @@ function drawNotifications() {
   container.innerHTML = h;
 }
 
-// ── WEB PUSH SUBSCRIPTION ────────────────────────────
+// ── WEB PUSH ─────────────────────────────────────────
 var _vapidPublicKey = null;
 
 async function initPushNotifications() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
   try {
-    var perm = Notification.permission;
-    if (perm === 'denied') return;
+    var perm = Notification.permission; if (perm === 'denied') return;
     var reg = await navigator.serviceWorker.ready;
-    if (perm === 'granted') {
-      await subscribeAndPost(reg);
-      updatePushPrompt();
-      return;
-    }
+    if (perm === 'granted') { await subscribeAndPost(reg); updatePushPrompt(); return; }
     updatePushPrompt();
-  } catch(e) {
-    console.error('[IronG] Push init error:', e);
-  }
+  } catch(e) { console.error('[IronG] Push init error:', e); }
 }
 
 async function getVapidKey() {
   if (_vapidPublicKey) return _vapidPublicKey;
-  try {
-    var res = await fetch('/vapid-public-key');
-    var data = await res.json();
-    _vapidPublicKey = data.publicKey;
-  } catch(e) {
-    console.error('[IronG] Failed to fetch VAPID key:', e);
-  }
+  try { var res = await fetch('/vapid-public-key'); var data = await res.json(); _vapidPublicKey = data.publicKey; } catch(e) { console.error('[IronG] Failed to fetch VAPID key:', e); }
   return _vapidPublicKey;
 }
 
 async function subscribeAndPost(reg) {
-  var pubKey = await getVapidKey();
-  if (!pubKey) return;
-  var sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlB64ToUint8Array(pubKey),
-  });
-  await fetch('/push/subscribe', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(sub.toJSON()),
-  });
+  var pubKey = await getVapidKey(); if (!pubKey) return;
+  var sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToUint8Array(pubKey)});
+  await fetch('/push/subscribe', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(sub.toJSON())});
   try { localStorage.setItem('ironG_pushSub', '1'); } catch(e) {}
 }
 
 async function enablePushNotifications() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
   try {
-    var perm = await Notification.requestPermission();
-    if (perm !== 'granted') { updatePushPrompt(); return; }
-    var reg = await navigator.serviceWorker.ready;
-    await subscribeAndPost(reg);
-    updatePushPrompt();
-  } catch(e) {
-    console.error('[IronG] Enable push error:', e);
-  }
+    var perm = await Notification.requestPermission(); if (perm !== 'granted') { updatePushPrompt(); return; }
+    var reg = await navigator.serviceWorker.ready; await subscribeAndPost(reg); updatePushPrompt();
+  } catch(e) { console.error('[IronG] Enable push error:', e); }
 }
 
 function updatePushPrompt() {
-  var banner = g('pushPromptBanner');
-  if (!banner) return;
-  var perm = Notification.permission;
-  banner.style.display = (perm === 'default' && 'PushManager' in window) ? 'block' : 'none';
+  var banner = g('pushPromptBanner'); if (!banner) return;
+  banner.style.display = (Notification.permission === 'default' && 'PushManager' in window) ? 'block' : 'none';
 }
 
 function urlB64ToUint8Array(base64String) {
   var padding = '='.repeat((4 - base64String.length % 4) % 4);
   var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  var rawData = atob(base64);
-  var outputArray = new Uint8Array(rawData.length);
+  var rawData = atob(base64); var outputArray = new Uint8Array(rawData.length);
   for (var i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
 }
@@ -1424,68 +1282,41 @@ function urlB64ToUint8Array(base64String) {
 // ── CREATE BOOKING FROM NOTIFICATION ─────────────────
 function createBookingFromNotif(id) {
   var n = null;
-  for (var i = 0; i < notifications.length; i++) {
-    if (notifications[i].id === id) { n = notifications[i]; break; }
-  }
+  for (var i = 0; i < notifications.length; i++) { if (notifications[i].id === id) { n = notifications[i]; break; } }
   if (!n) return;
 
-  var nameParts = (n.name || '').trim().split(/\s+/);
-  var trailerId = '';
-  if (n.trailer) {
-    var tl = n.trailer.toLowerCase();
-    if (tl.includes('utility')) trailerId = 'utility';
-    else if (tl.includes('hauler')) trailerId = 'hauler';
-  }
-
-  window._pendingBooking = {
-    fn: nameParts[0] || '',
-    ln: nameParts.slice(1).join(' ') || '',
-    ph: n.phone || '',
-    em: n.email || '',
-    cy: n.city || '',
-    vh: n.towVehicle || '',
-    trailerId: trailerId,
-    startDate: n.startDate || '',
-    ld: n.hauling || '',
-    src: n.referral || '',
-    nt: n.notes || '',
-  };
-  window._pendingBookingNotifKey = { key: 'submission:' + n.id, id: n.id };
-
-  showPage('new-booking');
-}
-
-function populatePendingBooking() {
-  var pb = window._pendingBooking;
-  if (!pb) return;
-  window._pendingBooking = null;
-
-  newBooking();
-
-  var set = function(id, val) { var el = g(id); if (el && val) el.value = val; };
-  set('f-fn', pb.fn);
-  set('f-ln', pb.ln);
-  set('f-ph', pb.ph);
-  set('f-em', pb.em);
-  set('f-cy', pb.cy);
-  set('f-vh', pb.vh);
-  set('f-nt', pb.nt);
-  set('f-ld', pb.ld);
-  if (pb.startDate) set('f-sd', pb.startDate);
-  if (pb.trailerId) {
-    set('f-tr', pb.trailerId);
-    calcPrice();
-  }
-  if (pb.src) {
-    var src = g('f-src');
-    if (src) {
-      for (var i = 0; i < src.options.length; i++) {
-        if (src.options[i].text === pb.src || src.options[i].value === pb.src) {
-          src.selectedIndex = i; break;
-        }
-      }
+  loadAllDrafts(function(drafts) {
+    // Check if a draft for this notification already exists
+    for (var i = 0; i < drafts.length; i++) {
+      if (drafts[i].notificationId === id) { resumeDraftById(drafts[i].id); return; }
     }
-  }
+    // No match — create new draft with notification data
+    if (drafts.length >= 10) { showToast('Maximum drafts reached. Complete or delete a draft first.'); showPage('drafts'); return; }
+    var nameParts = (n.name || '').trim().split(/\s+/);
+    var trailerId = '';
+    if (n.trailer) { var tl = n.trailer.toLowerCase(); if (tl.includes('utility')) trailerId = 'utility'; else if (tl.includes('hauler')) trailerId = 'hauler'; }
+    var now = new Date().toISOString();
+    var newId = Date.now();
+    _currentDraftId = newId;
+    _currentDraftCreatedAt = now;
+    _highestStepReached = 1;
+    var draft = {
+      id: newId, step: 1, createdAt: now, updatedAt: now,
+      notificationId: id,
+      fields: {
+        fn: nameParts[0]||'', ln: nameParts.slice(1).join(' ')||'',
+        ph: n.phone||'', em: n.email||'', cy: n.city||'', vh: n.towVehicle||'',
+        comm: 'text', tr: trailerId, sd: n.startDate||'', ed: '',
+        dep: '', ld: n.hauling||'', src: n.referral||'', nt: n.notes||''
+      },
+      pricing: null
+    };
+    idbPut('draft:' + newId, draft).catch(function(){});
+    window._pendingBookingNotifKey = { key: 'submission:' + n.id, id: n.id };
+    _applyDraftToForm(draft);
+    showPage('new-booking');
+    goStep(1, true);
+  });
 }
 
 initApp();

@@ -255,10 +255,12 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 .notif-detail .notif-field{font-size:12px;}
 .notif-actions{display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #1a1a1a;flex-wrap:wrap;justify-content:space-between;}
 
-/* ── STEP TAB BACK-NAV ── */
-.flow-step.done{cursor:pointer;}
+/* ── STEP TAB NAV ── */
+.flow-step{cursor:pointer;}
 .flow-step.done:hover{background:rgba(76,175,80,.15);border-color:rgba(76,175,80,.5);}
 .flow-step.done:active{background:rgba(76,175,80,.22);}
+.flow-step.reachable{cursor:pointer;opacity:.8;}
+.flow-step.reachable:hover{opacity:1;background:rgba(91,158,201,.08);border-color:rgba(91,158,201,.3);}
 
 /* ── DRAFT BANNER ── */
 .draft-banner{background:rgba(91,158,201,.08);border:1px solid rgba(91,158,201,.3);border-radius:6px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
