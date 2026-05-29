@@ -125,7 +125,7 @@ var titles = {
   'active-rentals':'Active Rentals', messages:'Message Templates', agreement:'Rental Agreement',
   pricing:'Pricing Reference', history:'Rental History', settings:'Settings',
   notifications:'Notifications', drafts:'Drafts', 'process-return':'Process Return',
-  messaging:'Messaging'
+  messaging:'Messaging', docs:'Documents'
 };
 
 function showPage(id, skipPush) {
@@ -142,7 +142,7 @@ function showPage(id, skipPush) {
   var drawerMap = {
     'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals',
     'new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications',
-    'drafts':'dnav-drafts','messaging':'dnav-messaging'
+    'drafts':'dnav-drafts','messaging':'dnav-messaging','docs':'dnav-docs'
   };
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
@@ -156,6 +156,7 @@ function showPage(id, skipPush) {
   if (id === 'new-booking') drawAvail();
   if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGateCodeSettings(); loadGlobalVarSettings(); }
   if (id === 'messaging') drawMessaging();
+  if (id === 'docs') drawDocs();
   if (id === 'messages') drawMessages();
   if (id === 'agreement') drawFullAgr();
   if (id === 'notifications') drawNotifications();
@@ -1527,6 +1528,11 @@ function drawActiveRentals() {
     } else {
       h += '<div class="rental-field"><span class="rental-label">Amount</span><span class="rental-value">$' + r.total + ' <span style="color:var(--muted);font-weight:400;">+$' + r.dep + ' dep</span></span></div>';
     }
+    h += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;display:flex;justify-content:space-between;align-items:center;">' +
+      '<span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-family:Oswald,sans-serif;">Documents</span>' +
+      '<button class="btn btn-ghost btn-sm" onclick="toggleBookingDocs(' + r.id + ')">📄 Docs</button>' +
+    '</div>' +
+    '<div id="booking-docs-' + r.id + '" style="display:none;margin-top:8px;"></div>';
     h += '</div>';
   });
   container.innerHTML = h;
@@ -1912,6 +1918,11 @@ function drawHistory() {
       '<div class="rental-field"><span class="rental-label">Dates</span><span class="rental-value">' + r.sd + ' → ' + r.ed + '</span></div>' +
       '<div class="rental-field"><span class="rental-label">Duration</span><span class="rental-value">' + r.days + ' day' + (r.days>1?'s':'') + '</span></div>' +
       '<div class="rental-field"><span class="rental-label">Revenue</span><span class="rental-value accent">$' + r.rental + '</span></div>' +
+      '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;display:flex;justify-content:space-between;align-items:center;">' +
+        '<span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-family:Oswald,sans-serif;">Documents</span>' +
+        '<button class="btn btn-ghost btn-sm" onclick="toggleBookingDocs(' + r.id + ')">📄 Docs</button>' +
+      '</div>' +
+      '<div id="booking-docs-' + r.id + '" style="display:none;margin-top:8px;"></div>' +
       '</div>';
   });
   container.innerHTML = h;
@@ -2105,7 +2116,8 @@ function addTokens(body, data) {
     data.addOns.forEach(function(a) { addOnsStr += '- ' + (a.label || a.name || '') + ': $' + (a.amount || 0) + '\n'; });
   }
   var map = {
-    firstName: data.firstName, trailerName: data.trailerName,
+    firstName: data.firstName, lastName: data.lastName,
+    trailerName: data.trailerName,
     startDate: data.startDate, startTime: data.startTime,
     endDate: data.endDate, endTime: data.endTime, days: data.days,
     pickupAddress: data.pickupAddress, rentalFee: data.rentalFee,
@@ -2113,7 +2125,11 @@ function addTokens(body, data) {
     towVehicle: data.towVehicle, contactInfo: data.contactInfo,
     gateCode: data.gateCode, lockboxCode: data.lockboxCode,
     paymentUrl: data.paymentUrl, businessPhone: data.businessPhone,
-    businessName: data.businessName
+    businessName: data.businessName,
+    date: data.date, email: data.email, city: data.city,
+    phone: data.phone,
+    actualReturnDate: data.actualReturnDate, actualReturnTime: data.actualReturnTime,
+    bookingId: data.bookingId !== undefined && data.bookingId !== null ? data.bookingId : undefined
   };
   for (var token in map) {
     if (map[token] !== undefined && map[token] !== null) {
@@ -2227,6 +2243,301 @@ function toggleTokenRef() {
   var open = body.style.display !== 'none';
   body.style.display = open ? 'none' : 'block';
   if (btn) btn.textContent = open ? 'Show' : 'Hide';
+}
+
+// ── DOCS PAGE ─────────────────────────────────────────
+
+var LOCAL_DOC_DEFAULTS = {};
+LOCAL_DOC_DEFAULTS['rental-agreement'] = "IRON G EQUIPMENT CO. LLC\nTRAILER RENTAL AGREEMENT\n\nDate: {date}\nBooking ID: {bookingId}\n\nRENTER INFORMATION\nName: {firstName} {lastName}\nPhone: {phone}\nEmail: {email}\nCity: {city}\nTow Vehicle: {towVehicle}\nDriver License: ___________________\n\nRENTAL DETAILS\nTrailer: {trailerName}\nPickup: {startDate} at {startTime}\nReturn: {endDate} at {endTime}\nTotal Days: {days}\nPickup Location: {pickupAddress}\n\nCHARGES\nRental Fee: ${rentalFee}\n{addOns}Tax (8.85%): ${tax}\nRefundable Deposit: ${deposit}\nTotal Due: ${total}\n\nTERMS AND CONDITIONS\n1. RENTER must be 18 years or older with a valid driver's license.\n2. RENTER is responsible for the trailer from time of pickup until return is confirmed.\n3. RENTER assumes full liability for any damage, theft, or loss occurring during the rental period.\n4. Trailer must be returned to {pickupAddress} by {endDate} at {endTime}. Late returns will be charged at the daily rental rate.\n5. RENTER must have adequate tow vehicle and equipment. Iron G Equipment Co. LLC is not responsible for accidents or damage caused by improper towing.\n6. No off-road use. Trailer must remain on paved or improved surfaces.\n7. RENTER must not sublet or loan the trailer to any third party.\n8. Deposit of ${deposit} will be refunded upon confirmed clean return with required photos and video. Deposit may be fully or partially withheld for damage, excessive cleaning, or missing equipment.\n9. Early returns do not automatically qualify for partial refunds. Contact Iron G Equipment Co. to discuss.\n10. RENTER agrees to submit minimum 4 photos (front, rear, driver side, passenger side) plus 1 walk-around video upon return.\n\nACKNOWLEDGEMENTS\nRenter confirms tow vehicle is capable of safely towing this trailer: ______\nRenter confirms they have reviewed and understand all terms: ______\nRenter confirms trailer was inspected at pickup and accepted in good condition: ______\n\nSIGNATURES\nRenter Signature: ___________________ Date: ________\nPrinted Name: ___________________\nIron G Equipment Co. Representative: ___________________ Date: ________";
+LOCAL_DOC_DEFAULTS['damage-report'] = "IRON G EQUIPMENT CO. LLC\nDAMAGE / INCIDENT REPORT\n\nDate: {date}\nBooking ID: {bookingId}\nRental Period: {startDate} — {endDate}\n\nRENTER INFORMATION\nName: {firstName} {lastName}\nPhone: {phone}\n\nTRAILER INFORMATION\nTrailer: {trailerName}\n\nDAMAGE DESCRIPTION\nDate/Time Discovered: ___________________\nLocation Discovered: ___________________\nDescription of Damage:\n_______________________________________________\n_______________________________________________\n\nESTIMATED REPAIR COST: $___________________\nDEPOSIT HELD: ${deposit}\nADDITIONAL AMOUNT OWED: $___________________\n\nPHOTOS/VIDEO ON FILE: ☐ Yes  ☐ No\nNUMBER OF PHOTOS: _______\n\nNOTES:\n_______________________________________________\n\nIron G Equipment Co. Representative: ___________________ Date: ________";
+LOCAL_DOC_DEFAULTS['return-confirmation'] = "IRON G EQUIPMENT CO. LLC\nRETURN CONFIRMATION\n\nDate: {date}\nBooking ID: {bookingId}\n\nRENTER: {firstName} {lastName}\nTRAILER: {trailerName}\nRENTAL PERIOD: {startDate} at {startTime} — {endDate} at {endTime}\n\nRETURN DETAILS\nActual Return Date: {actualReturnDate}\nActual Return Time: {actualReturnTime}\nCondition: ☐ Clean  ☐ Damage noted\n\nFINANCIAL SUMMARY\nTotal Charged: ${total}\nDeposit Held: ${deposit}\nDeposit Refunded: $___________________\nAdditional Charges: $___________________\nEarly Return Refund: $___________________\n\nRETURN DOCUMENTATION RECEIVED\n☐ Photo — Front\n☐ Photo — Rear\n☐ Photo — Driver Side\n☐ Photo — Passenger Side\n☐ Additional damage photos\n☐ Walk-around video\n\nNOTES:\n_______________________________________________\n\nIron G Equipment Co. Representative: ___________________ Date: ________";
+
+var DOC_DEFS = [
+  { id: 'rental-agreement', label: 'Rental Agreement', category: 'customer' },
+  { id: 'damage-report', label: 'Damage / Incident Report', category: 'customer' },
+  { id: 'return-confirmation', label: 'Return Confirmation', category: 'customer' }
+];
+
+var DOC_LABELS = { 'rental-agreement':'Rental Agreement', 'damage-report':'Damage / Incident Report', 'return-confirmation':'Return Confirmation' };
+
+var _docGenSelections = {};
+
+async function drawDocs() {
+  var container = g('docsBody'); if (!container) return;
+  container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:20px;font-size:13px;">Loading...</div>';
+  var savedDocs = {};
+  try {
+    var res = await fetch('/docs');
+    if (res.ok) { var arr = await res.json(); arr.forEach(function(d){ savedDocs[d.id] = d; }); }
+  } catch(e) {}
+  var h = '<div class="doc-section-label">Customer Documents</div>';
+  DOC_DEFS.forEach(function(def) {
+    var saved = savedDocs[def.id];
+    var body = saved ? saved.body : (LOCAL_DOC_DEFAULTS[def.id] || '');
+    var updatedAt = saved ? saved.updatedAt : null;
+    var updatedLabel = updatedAt ? 'Saved ' + relativeTime(new Date(updatedAt).toISOString()) : 'Default';
+    var bodyEsc = escHtml(body);
+    var allBks = state.rentals.concat(state.done);
+    var opts = '<option value="">— Select a booking —</option>';
+    allBks.forEach(function(bk){ opts += '<option value="' + bk.id + '">' + escHtml((bk.c.fn||'') + ' ' + (bk.c.ln||'') + ' — ' + (bk.trailer||'') + ' — ' + (bk.sd||'')) + '</option>'; });
+    h += '<div class="card" id="doc-card-' + def.id + '">' +
+      '<div class="card-header">' +
+        '<div class="card-title">' + def.label + '</div>' +
+        '<span id="doc-updated-' + def.id + '" style="font-size:11px;color:var(--muted);">' + updatedLabel + '</span>' +
+      '</div>' +
+      '<div class="card-body">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
+          '<button class="btn btn-ghost btn-sm" onclick="toggleDocEdit(\'' + def.id + '\')">✏️ Edit Template</button>' +
+          '<button class="btn btn-primary btn-sm" onclick="toggleDocGenerate(\'' + def.id + '\')">📄 Generate for Booking</button>' +
+        '</div>' +
+        '<div id="doc-edit-area-' + def.id + '" style="display:none;">' +
+          '<textarea class="fi form-textarea" id="doc-body-' + def.id + '" oninput="updateDocCharCount(\'' + def.id + '\')" style="min-height:300px;font-size:12px;line-height:1.5;font-family:monospace;">' + bodyEsc + '</textarea>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;margin-bottom:10px;">' +
+            '<span id="doc-chars-' + def.id + '" style="font-size:11px;color:var(--muted);">' + body.length + ' chars</span>' +
+            '<span id="doc-save-status-' + def.id + '" style="font-size:11px;"></span>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<button class="btn btn-primary btn-sm" onclick="saveDoc(\'' + def.id + '\')">Save Template</button>' +
+            '<button class="btn btn-ghost btn-sm" onclick="resetDoc(\'' + def.id + '\')">Reset to Default</button>' +
+            '<button class="btn btn-ghost btn-sm" onclick="toggleDocEdit(\'' + def.id + '\')">Close</button>' +
+          '</div>' +
+        '</div>' +
+        '<div id="doc-gen-panel-' + def.id + '" style="display:none;">' +
+          '<div style="margin-bottom:10px;"><label class="fl">Select Booking</label>' +
+          '<select class="form-select" id="doc-bk-select-' + def.id + '" onchange="generateDocForBooking(\'' + def.id + '\')">' + opts + '</select></div>' +
+          '<div id="doc-preview-' + def.id + '" style="display:none;">' +
+            '<div id="doc-preview-text-' + def.id + '" style="background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:14px;font-size:12px;line-height:1.5;font-family:monospace;white-space:pre-wrap;max-height:400px;overflow-y:auto;margin-bottom:10px;color:var(--text);"></div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+              '<button class="btn btn-primary btn-sm" onclick="copyDocPreview(\'' + def.id + '\')">📋 Copy</button>' +
+              '<button class="btn btn-ghost btn-sm" id="doc-sms-btn-' + def.id + '" style="display:none;" onclick="sendDocPreviewSms(\'' + def.id + '\')">📱 SMS</button>' +
+              '<button class="btn btn-ghost btn-sm" id="doc-email-btn-' + def.id + '" style="display:none;" onclick="sendDocPreviewEmail(\'' + def.id + '\')">📧 Email</button>' +
+              '<button class="btn btn-success btn-sm" onclick="saveDocToBooking(\'' + def.id + '\')">💾 Save to Booking</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  });
+  h += '<div class="doc-section-label" style="margin-top:8px;">Operational &amp; Reference</div>';
+  ['Insurance Certificate', 'LLC Documents', 'Trailer Registration'].forEach(function(label) {
+    h += '<div class="card"><div class="card-header"><div class="card-title">' + label + '</div></div><div class="card-body"><div style="font-size:13px;color:var(--muted);">Upload or link coming soon</div></div></div>';
+  });
+  container.innerHTML = h;
+}
+
+function toggleDocEdit(id) {
+  var el = g('doc-edit-area-' + id); if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (!open) { var gp = g('doc-gen-panel-' + id); if (gp) gp.style.display = 'none'; }
+}
+
+function toggleDocGenerate(id) {
+  var el = g('doc-gen-panel-' + id); if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (!open) { var ea = g('doc-edit-area-' + id); if (ea) ea.style.display = 'none'; }
+}
+
+function updateDocCharCount(id) {
+  var ta = g('doc-body-' + id); var ct = g('doc-chars-' + id);
+  if (ta && ct) ct.textContent = ta.value.length + ' chars';
+}
+
+async function saveDoc(id) {
+  var ta = g('doc-body-' + id); var statusEl = g('doc-save-status-' + id);
+  if (!ta) return;
+  var body = ta.value;
+  if (statusEl) { statusEl.textContent = 'Saving...'; statusEl.style.color = 'var(--muted)'; }
+  try {
+    var def = DOC_DEFS.filter(function(d){ return d.id === id; })[0] || {};
+    var res = await fetch('/docs/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: def.label || id, body: body, category: 'customer' }) });
+    var data = await res.json();
+    if (res.ok && data.success) {
+      if (statusEl) { statusEl.textContent = '✓ Saved'; statusEl.style.color = 'var(--success)'; setTimeout(function(){ if (statusEl) statusEl.textContent = ''; }, 3000); }
+      var updEl = g('doc-updated-' + id); if (updEl) updEl.textContent = 'Just saved';
+    } else { if (statusEl) { statusEl.textContent = 'Save failed'; statusEl.style.color = 'var(--danger)'; } }
+  } catch(e) { if (statusEl) { statusEl.textContent = 'Save failed'; statusEl.style.color = 'var(--danger)'; } }
+}
+
+async function resetDoc(id) {
+  if (!confirm('Reset this document to default? Your changes will be lost.')) return;
+  try {
+    var res = await fetch('/docs/reset/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    var data = await res.json();
+    if (res.ok && data.success) {
+      var ta = g('doc-body-' + id); if (ta) { ta.value = data.body; updateDocCharCount(id); }
+      var updEl = g('doc-updated-' + id); if (updEl) updEl.textContent = 'Default';
+      showToast('Reset to default');
+    }
+  } catch(e) { alert('Reset failed: ' + e.message); }
+}
+
+async function getDocBody(id) {
+  try {
+    var res = await fetch('/docs/' + id);
+    if (res.ok) { var data = await res.json(); if (data && data.body) return data.body; }
+  } catch(e) {}
+  return LOCAL_DOC_DEFAULTS[id] || '';
+}
+
+function buildDocData(bk) {
+  var c = bk.c || {};
+  var today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  var daysDisp = bk.durationLabel || (Math.ceil(bk.days||1) + ' day' + (Math.ceil(bk.days||1)!==1?'s':''));
+  var contactTarget = c.contactPref === 'email' ? (c.em||'') : (c.ph||'');
+  var tax = bk.tax || 0;
+  var grand = bk.grand || bk.total || 0;
+  return {
+    date: today, bookingId: '' + bk.id,
+    firstName: c.fn||'', lastName: c.ln||'', phone: c.ph||'', email: c.em||'', city: c.cy||'',
+    towVehicle: c.vh||'', trailerName: bk.trailer||'',
+    startDate: bk.sd||'', startTime: bk.startTime||'', endDate: bk.ed||'', endTime: bk.endTime||'',
+    days: daysDisp,
+    pickupAddress: globalVars.pickupAddress || 'Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099',
+    rentalFee: '' + (bk.rental||0),
+    addOns: bk.addOns || [],
+    tax: (typeof tax === 'number' ? tax.toFixed(2) : '' + tax),
+    deposit: '' + (bk.dep||0),
+    total: (typeof grand === 'number' ? grand.toFixed(2) : '' + grand),
+    contactInfo: contactTarget,
+    gateCode: globalVars.gateCode || '',
+    lockboxCode: bk.lockboxCode || '',
+    actualReturnDate: bk.actualReturnDate || '',
+    actualReturnTime: bk.actualReturnTime || '',
+    businessPhone: globalVars.businessPhone || '(405) 393-4161',
+    businessName: globalVars.businessName || 'Iron G Equipment Co.',
+    paymentUrl: bk.paymentLinkUrl || ''
+  };
+}
+
+async function generateDocForBooking(docId) {
+  var sel = g('doc-bk-select-' + docId); if (!sel || !sel.value) return;
+  var bkId = parseInt(sel.value, 10);
+  var bk = findBookingById(bkId); if (!bk) return;
+  _docGenSelections[docId] = bkId;
+  var body = await getDocBody(docId);
+  var generated = addTokens(body, buildDocData(bk));
+  var previewDiv = g('doc-preview-' + docId);
+  var previewText = g('doc-preview-text-' + docId);
+  if (previewText) previewText.textContent = generated;
+  if (previewDiv) previewDiv.style.display = 'block';
+  var smsBtn = g('doc-sms-btn-' + docId);
+  var emailBtn = g('doc-email-btn-' + docId);
+  if (smsBtn) smsBtn.style.display = (bk.c.contactPref !== 'email') ? 'inline-flex' : 'none';
+  if (emailBtn) emailBtn.style.display = (bk.c.contactPref === 'email') ? 'inline-flex' : 'none';
+}
+
+function copyDocPreview(docId) {
+  var el = g('doc-preview-text-' + docId); if (!el) return;
+  var text = el.textContent;
+  function fb() { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta); }
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).catch(fb); } else { fb(); }
+  showToast('📋 Copied!');
+}
+
+function sendDocPreviewSms(docId) {
+  var bkId = _docGenSelections[docId]; if (!bkId) return;
+  var bk = findBookingById(bkId); if (!bk) return;
+  var el = g('doc-preview-text-' + docId); if (!el) return;
+  window.location.href = 'sms:' + bk.c.ph.replace(/\D/g,'') + '?body=' + encodeURIComponent(el.textContent);
+}
+
+function sendDocPreviewEmail(docId) {
+  var bkId = _docGenSelections[docId]; if (!bkId) return;
+  var bk = findBookingById(bkId); if (!bk) return;
+  var el = g('doc-preview-text-' + docId); if (!el) return;
+  var def = DOC_DEFS.filter(function(d){ return d.id === docId; })[0] || {};
+  window.location.href = 'mailto:' + encodeURIComponent(bk.c.em||'') + '?subject=' + encodeURIComponent((def.label||docId) + ' — Iron G Equipment Co.') + '&body=' + encodeURIComponent(el.textContent);
+}
+
+async function saveDocToBooking(docId) {
+  var bkId = _docGenSelections[docId];
+  if (!bkId) { showToast('Select a booking first'); return; }
+  var bk = findBookingById(bkId); if (!bk) return;
+  var el = g('doc-preview-text-' + docId); if (!el) return;
+  var body = el.textContent;
+  try {
+    var res = await fetch('/docs/booking/' + bkId + '/' + docId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: body }) });
+    var data = await res.json();
+    if (res.ok && data.success) { showToast('✓ Saved to booking ' + (bk.c.fn||'') + ' ' + (bk.c.ln||'')); }
+    else { showToast('Save failed'); }
+  } catch(e) { showToast('Save failed'); }
+}
+
+async function toggleBookingDocs(id) {
+  var el = g('booking-docs-' + id); if (!el) return;
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px 0;">Loading...</div>';
+  try {
+    var res = await fetch('/docs/booking/' + id);
+    var items = res.ok ? await res.json() : [];
+    if (!items.length) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px 0;">No saved documents.</div>';
+      return;
+    }
+    var h = '';
+    items.forEach(function(item) {
+      var label = DOC_LABELS[item.docId] || item.docId;
+      var savedAgo = relativeTime(new Date(item.savedAt).toISOString());
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #1a1a1a;font-size:12px;">' +
+        '<div><div style="color:var(--white);font-weight:600;">' + escHtml(label) + '</div><div style="color:var(--muted);font-size:11px;">Saved ' + savedAgo + '</div></div>' +
+        '<button class="btn btn-ghost btn-sm" onclick="viewBookingDoc(' + id + ',\'' + item.docId + '\')">View</button>' +
+      '</div>';
+    });
+    el.innerHTML = h;
+  } catch(e) { el.innerHTML = '<div style="color:var(--danger);font-size:12px;padding:6px 0;">Load failed</div>'; }
+}
+
+async function viewBookingDoc(bookingId, docId) {
+  var bk = findBookingById(parseInt(bookingId, 10));
+  var pnl = g('booking-docs-' + bookingId); if (!pnl) return;
+  var viewId = 'viewed-doc-' + bookingId + '-' + docId;
+  if (g(viewId)) { g(viewId).remove(); return; }
+  try {
+    var res = await fetch('/docs/booking/' + bookingId + '/' + docId);
+    var data = await res.json();
+    if (!data || !data.body) { showToast('Document not found'); return; }
+    var label = DOC_LABELS[docId] || docId;
+    var contactPref = bk ? (bk.c.contactPref || 'sms') : 'sms';
+    var smsBtnHtml = (contactPref !== 'email' && bk && bk.c.ph)
+      ? '<button class="btn btn-ghost btn-sm" onclick="sendViewedDocSms(\'' + bookingId + '\',\'' + docId + '\',\'' + viewId + '\')">📱 SMS</button>' : '';
+    var emailBtnHtml = (contactPref === 'email' && bk && bk.c.em)
+      ? '<button class="btn btn-ghost btn-sm" onclick="sendViewedDocEmail(\'' + bookingId + '\',\'' + docId + '\',\'' + escHtml(label) + '\',\'' + viewId + '\')">📧 Email</button>' : '';
+    var el = document.createElement('div');
+    el.id = viewId;
+    el.style.marginTop = '10px';
+    el.innerHTML =
+      '<div style="font-size:11px;color:var(--primary);text-transform:uppercase;letter-spacing:1px;font-family:Oswald,sans-serif;margin-bottom:6px;">' + escHtml(label) + '</div>' +
+      '<div id="vdt-' + viewId + '" style="background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:12px;font-size:12px;line-height:1.5;font-family:monospace;white-space:pre-wrap;max-height:300px;overflow-y:auto;margin-bottom:8px;color:var(--text);">' + escHtml(data.body) + '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<button class="btn btn-primary btn-sm" onclick="copyViewedDoc(\'' + viewId + '\')">📋 Copy</button>' +
+        smsBtnHtml + emailBtnHtml +
+        '<button class="btn btn-ghost btn-sm" onclick="document.getElementById(\'' + viewId + '\').remove()">Close</button>' +
+      '</div>';
+    pnl.appendChild(el);
+  } catch(e) { showToast('Load failed'); }
+}
+
+function copyViewedDoc(viewId) {
+  var el = g('vdt-' + viewId); if (!el) return;
+  var text = el.textContent;
+  function fb() { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta); }
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).catch(fb); } else { fb(); }
+  showToast('📋 Copied!');
+}
+
+function sendViewedDocSms(bookingId, docId, viewId) {
+  var bk = findBookingById(parseInt(bookingId, 10)); if (!bk) return;
+  var el = g('vdt-' + viewId); if (!el) return;
+  window.location.href = 'sms:' + bk.c.ph.replace(/\D/g,'') + '?body=' + encodeURIComponent(el.textContent);
+}
+
+function sendViewedDocEmail(bookingId, docId, label, viewId) {
+  var bk = findBookingById(parseInt(bookingId, 10)); if (!bk) return;
+  var el = g('vdt-' + viewId); if (!el) return;
+  window.location.href = 'mailto:' + encodeURIComponent(bk.c.em||'') + '?subject=' + encodeURIComponent(label + ' — Iron G Equipment Co.') + '&body=' + encodeURIComponent(el.textContent);
 }
 
 // ── GLOBAL VARS SETTINGS ──────────────────────────────

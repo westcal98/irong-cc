@@ -38,9 +38,9 @@
   <div class="drawer-nav">
     <div class="drawer-item" id="dnav-dashboard" onclick="navTo('dashboard')"><span class="drawer-icon">⚡</span>Dashboard</div>
     <div class="drawer-item" id="dnav-drafts" onclick="navTo('drafts')"><span class="drawer-icon">📑</span>Drafts</div>
-    <div class="drawer-item" id="dnav-fleet" onclick="navTo('fleet')"><span class="drawer-icon">🚛</span>Fleet</div>
     <div class="drawer-item" id="dnav-active-rentals" onclick="navTo('active-rentals')"><span class="drawer-icon">📋</span>Bookings</div>
-    <div class="drawer-item" id="dnav-new-booking" onclick="closeDrawer();startNewDraft()"><span class="drawer-icon">📝</span>Workflow</div>
+    <div class="drawer-item" id="dnav-fleet" onclick="navTo('fleet')"><span class="drawer-icon">🚛</span>Fleet</div>
+    <div class="drawer-item" id="dnav-docs" onclick="navTo('docs')"><span class="drawer-icon">📄</span>Docs</div>
     <div class="drawer-item" id="dnav-messaging" onclick="navTo('messaging')"><span class="drawer-icon">✉️</span>Messaging</div>
     <div class="drawer-item" id="dnav-notifications" onclick="navTo('notifications')"><span class="drawer-icon">🔔</span>Notifications<span class="drawer-notif-badge" id="drawerNotifBadge" style="display:none">0</span></div>
     <div class="drawer-item" id="dnav-settings" onclick="navTo('settings')"><span class="drawer-icon">⚙️</span>Settings</div>
@@ -304,6 +304,11 @@
       <button class="btn btn-primary btn-sm" onclick="enablePushNotifications()">Enable Notifications</button>
     </div>
     <div id="notifBody"></div>
+  </div>
+
+  <!-- DOCS -->
+  <div class="page" id="page-docs">
+    <div id="docsBody"></div>
   </div>
 
   <!-- MESSAGING -->
