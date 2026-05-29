@@ -8,6 +8,7 @@ var _contactPref = 'sms';
 var _customAddOns = [];
 var _packageActionTaken = false;
 var _currentLockboxCode = null;
+var _processReturnId = null;
 var db = null;
 var currentPage = 'dashboard';
 var _currentDraftId = null;
@@ -121,7 +122,7 @@ var titles = {
   dashboard:'Dashboard', fleet:'Fleet Status', 'new-booking':'New Booking',
   'active-rentals':'Active Rentals', messages:'Message Templates', agreement:'Rental Agreement',
   pricing:'Pricing Reference', history:'Rental History', settings:'Settings',
-  notifications:'Notifications', drafts:'Drafts'
+  notifications:'Notifications', drafts:'Drafts', 'process-return':'Process Return'
 };
 
 function showPage(id, skipPush) {
@@ -147,6 +148,7 @@ function showPage(id, skipPush) {
   if (id === 'dashboard') drawDashboard();
   if (id === 'fleet') drawFleet();
   if (id === 'active-rentals') drawActiveRentals();
+  if (id === 'process-return') drawProcessReturn(_processReturnId);
   if (id === 'history') drawHistory();
   if (id === 'new-booking') drawAvail();
   if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGateCodeSettings(); }
@@ -778,6 +780,14 @@ function confirmPaymentReceived() {
   bk.status = 'confirmed'; save();
   setGate(1,'done','Payment received');
   setGate(2,'active','Send access info');
+  var g1div = g('gate1-body');
+  if (g1div) {
+    g1div.innerHTML =
+      '<div style="color:var(--success);font-size:13px;margin-bottom:10px;">✓ Payment received — ' + fmtMoney(bk.grand) + '</div>' +
+      '<div class="alert ai" style="font-size:12px;margin-bottom:10px;">To process refunds, retrieve the Payment Intent ID from your Stripe dashboard and enter it here.</div>' +
+      '<div class="fg"><label class="fl">Payment Intent ID (for refunds)</label>' +
+      '<input class="fi" id="gate1-pi-id" type="text" placeholder="pi_..." value="' + escHtml(bk.paymentIntentId||'') + '" oninput="savePaymentIntentId()"></div>';
+  }
   addAct('Payment confirmed: ' + bk.c.fn + ' ' + bk.c.ln, 'green');
   drawGate2(bk);
   showToast('Payment confirmed — proceed to confirmation');
@@ -1447,10 +1457,25 @@ function drawActiveRentals() {
     if (r.status === 'active') {
       var bc = dl<=0?'b-overdue':dl===1?'b-pending':'b-available';
       var bt = dl<=0?'OVERDUE':dl===1?'DUE TOMORROW':r.days+'-DAY RENTAL';
+      var isDueToday = (r.ed === new Date().toISOString().split('T')[0]);
       h += '<div class="rental-field"><span class="rental-label">Return</span><span class="rental-value"><span class="badge ' + bc + '">' + bt + '</span></span></div>';
       h += '<div class="rental-field"><span class="rental-label">Combo</span><span class="rental-value accent">' + r.combo + '</span></div>';
       h += '<div class="rental-field"><span class="rental-label">Amount</span><span class="rental-value">$' + r.total + ' <span style="color:var(--muted);font-weight:400;">+$' + r.dep + ' dep</span></span></div>';
-      h += '<div class="rental-actions"><button class="btn btn-success btn-sm" onclick="markReturned(' + r.id + ')">✓ Mark Returned</button></div>';
+      if (r.reminderSentAt) {
+        h += '<div style="font-size:11px;color:var(--success);padding:4px 0;">✓ Reminder sent ' + new Date(r.reminderSentAt).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + '</div>';
+      }
+      h += '<div id="reminder-panel-' + r.id + '" style="display:none;margin-top:10px;background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:12px;">' +
+        '<div class="msg-text" id="reminder-msg-' + r.id + '" style="margin-bottom:10px;font-size:12px;"></div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+          '<button class="btn btn-primary btn-sm" onclick="copyReminderMsg(' + r.id + ')">📋 Copy</button>' +
+          (r.c.contactPref==='email'
+            ? '<button class="btn btn-ghost btn-sm" onclick="sendReminderMsg(' + r.id + ')">📧 Send Email</button>'
+            : '<button class="btn btn-ghost btn-sm" onclick="sendReminderMsg(' + r.id + ')">📱 Send SMS</button>') +
+        '</div></div>';
+      h += '<div class="rental-actions">' +
+        '<button class="btn btn-ghost btn-sm" onclick="toggleReminderPanel(' + r.id + ')" style="' + (isDueToday?'border-color:var(--warning);color:var(--warning);':'') + '">📨 Reminder</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="goToProcessReturn(' + r.id + ')">📋 Process Return</button>' +
+      '</div>';
     } else if (r.status === 'returned') {
       h += '<div class="rental-field"><span class="rental-label">Deposit</span><span class="rental-value">$' + r.dep + '</span></div>';
       h += '<div class="deposit-actions">';
@@ -1468,6 +1493,337 @@ function drawActiveRentals() {
     h += '</div>';
   });
   container.innerHTML = h;
+}
+
+// ── RETURN REMINDER ──────────────────────────────────
+function goToProcessReturn(id) {
+  _processReturnId = id;
+  showPage('process-return');
+}
+
+function toggleReminderPanel(id) {
+  var panel = g('reminder-panel-' + id); if (!panel) return;
+  var bk = findBookingById(id); if (!bk) return;
+  if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+  var msgEl = g('reminder-msg-' + id);
+  if (msgEl) msgEl.textContent = buildReminderMsg(bk);
+  panel.style.display = '';
+}
+
+function buildReminderMsg(bk) {
+  var c = bk.c;
+  var contactTarget = c.contactPref==='email' ? c.em : c.ph;
+  var endDateFmt = new Date(bk.ed+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  var endTimeFmt = bk.endTime ? new Date('2000-01-01T'+bk.endTime).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '';
+  return 'Hi ' + c.fn + '! Reminder from Iron G — your trailer is due back TOMORROW (' + endDateFmt + ')' + (endTimeFmt?' by '+endTimeFmt:'') + '.\n\n' +
+    '📍 Return to: Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099\n\n' +
+    'To complete your return please send to ' + contactTarget + ':\n' +
+    '- Minimum 4 photos: front, rear, driver side, passenger side\n' +
+    '- Additional photos if any damage occurred\n' +
+    '- 1 walk-around video\n\n' +
+    (endTimeFmt ? '⚠️ Returns after ' + endTimeFmt + ' on ' + endDateFmt + ' may result in additional charges.\n\n' : '') +
+    'Lock the coupler when done and text Frank at (405) 393-4161 when returned.\n\n' +
+    '— Iron G Equipment Co.';
+}
+
+function copyReminderMsg(id) {
+  var el = g('reminder-msg-' + id); if (!el) return;
+  var text = el.textContent;
+  function fb() { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta); }
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).catch(fb); } else { fb(); }
+  markReminderSent(id);
+  showToast('Reminder copied!');
+}
+
+function sendReminderMsg(id) {
+  var bk = findBookingById(id); if (!bk) return;
+  var el = g('reminder-msg-' + id); if (!el) return;
+  var msg = el.textContent;
+  if (bk.c.contactPref==='email') {
+    window.location.href = 'mailto:' + encodeURIComponent(bk.c.em) + '?subject=' + encodeURIComponent('Trailer Return Reminder') + '&body=' + encodeURIComponent(msg);
+  } else {
+    window.location.href = 'sms:' + bk.c.ph.replace(/\D/g,'') + '?body=' + encodeURIComponent(msg);
+  }
+  markReminderSent(id);
+}
+
+function markReminderSent(id) {
+  var bk = findBookingById(id); if (!bk) return;
+  bk.reminderSentAt = new Date().toISOString(); save();
+}
+
+function savePaymentIntentId() {
+  var el = g('gate1-pi-id'); if (!el) return;
+  var bk = findBookingById(state.booking.id); if (!bk) return;
+  bk.paymentIntentId = el.value.trim(); save();
+}
+
+// ── PROCESS RETURN ────────────────────────────────────
+function drawProcessReturn(id) {
+  var container = g('processReturnBody'); if (!container) return;
+  var bk = findBookingById(id);
+  if (!bk) { container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:40px;">Booking not found.</div>'; return; }
+  var today = new Date();
+  var todayStr = today.toISOString().split('T')[0];
+  var nowTime = today.getHours().toString().padStart(2,'0') + ':' + today.getMinutes().toString().padStart(2,'0');
+  var endTimeFmt = bk.endTime ? new Date('2000-01-01T'+bk.endTime).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '';
+
+  container.innerHTML =
+    '<div class="card"><div class="card-header"><div class="card-title">' + escHtml(bk.c.fn+' '+bk.c.ln) + ' — Return</div></div>' +
+      '<div class="card-body">' +
+        '<div class="crow"><span class="cl">Trailer</span><span class="cv">' + escHtml(bk.trailer) + '</span></div>' +
+        '<div class="crow"><span class="cl">Booked Return</span><span class="cv">' + bk.ed + (endTimeFmt?' at '+endTimeFmt:'') + '</span></div>' +
+      '</div></div>' +
+
+    '<div class="card"><div class="card-header"><div class="card-title">Section 1 — Return Details</div></div><div class="card-body">' +
+      '<div class="fr">' +
+        '<div class="fg"><label class="fl">Actual Return Date</label><input class="fi" id="ret-date" type="date" value="' + todayStr + '" oninput="updateReturnDiff()"></div>' +
+        '<div class="fg"><label class="fl">Actual Return Time</label><input class="fi" id="ret-time" type="time" value="' + nowTime + '" oninput="updateReturnDiff()"></div>' +
+      '</div>' +
+      '<div id="ret-diff-display" style="margin-bottom:14px;"></div>' +
+      '<div id="early-refund-section" style="display:none;">' +
+        '<div class="fg"><label class="fl">Early Return Refund</label>' +
+          '<label style="display:flex;gap:8px;align-items:center;margin-bottom:8px;cursor:pointer;"><input type="radio" name="early-refund" value="full" onchange="updateEarlyRefundOptions()"><span id="early-full-label">Full refund of difference</span></label>' +
+          '<label style="display:flex;gap:8px;align-items:center;margin-bottom:8px;cursor:pointer;"><input type="radio" name="early-refund" value="partial" onchange="updateEarlyRefundOptions()"><span>Partial refund</span></label>' +
+          '<div id="early-partial-input" style="display:none;margin-bottom:8px;padding-left:22px;"><input class="fi" id="early-partial-amt" type="number" min="0" step="0.01" placeholder="Amount ($)" oninput="updateReturnSummary()"></div>' +
+          '<label style="display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="radio" name="early-refund" value="none" checked onchange="updateEarlyRefundOptions()"><span>No refund</span></label>' +
+        '</div>' +
+      '</div>' +
+      '<div class="fg"><label style="display:flex;gap:10px;align-items:center;cursor:pointer;">' +
+        '<input type="checkbox" id="add-charge-toggle" style="accent-color:var(--primary);width:16px;height:16px;" onchange="updateAdditionalCharge()">' +
+        '<span style="font-size:14px;">Add additional charge?</span></label>' +
+        '<div id="add-charge-inputs" style="display:none;margin-top:10px;">' +
+          '<div class="fr"><div class="fg"><label class="fl">Charge Label</label><input class="fi" id="add-charge-label" type="text" placeholder="Cleaning fee, damage..." oninput="updateReturnSummary()"></div>' +
+          '<div class="fg"><label class="fl">Amount ($)</label><input class="fi" id="add-charge-amount" type="number" min="0" step="0.01" placeholder="0" oninput="updateReturnSummary()"></div></div>' +
+        '</div>' +
+      '</div>' +
+    '</div></div>' +
+
+    '<div class="card"><div class="card-header"><div class="card-title">Section 2 — Return Documentation</div></div><div class="card-body">' +
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Confirm all return media received</div>' +
+      '<label style="display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="ret-chk1" style="accent-color:var(--primary);width:16px;height:16px;" onchange="updateCompleteReturnBtn()"><span style="font-size:14px;">Photo — Front</span></label>' +
+      '<label style="display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="ret-chk2" style="accent-color:var(--primary);width:16px;height:16px;" onchange="updateCompleteReturnBtn()"><span style="font-size:14px;">Photo — Rear</span></label>' +
+      '<label style="display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="ret-chk3" style="accent-color:var(--primary);width:16px;height:16px;" onchange="updateCompleteReturnBtn()"><span style="font-size:14px;">Photo — Driver side</span></label>' +
+      '<label style="display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="ret-chk4" style="accent-color:var(--primary);width:16px;height:16px;" onchange="updateCompleteReturnBtn()"><span style="font-size:14px;">Photo — Passenger side</span></label>' +
+      '<label style="display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="ret-chk5" style="accent-color:var(--primary);width:16px;height:16px;" onchange="updateCompleteReturnBtn()"><span style="font-size:14px;">Walk-around video</span></label>' +
+      '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;"><input type="checkbox" id="damage-toggle" style="accent-color:var(--danger);width:16px;height:16px;" onchange="updateDamageSection()"><span style="font-size:14px;color:var(--danger);">Damage noted?</span></label>' +
+      '<div id="damage-section" style="display:none;margin-top:12px;">' +
+        '<div class="fg"><label class="fl">Damage Description *</label><textarea class="form-textarea" id="damage-desc" placeholder="Describe damage..." oninput="updateCompleteReturnBtn()"></textarea></div>' +
+        '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;"><input type="checkbox" id="ret-chk6" style="accent-color:var(--primary);width:16px;height:16px;" onchange="updateCompleteReturnBtn()"><span style="font-size:14px;">Additional damage photos received</span></label>' +
+      '</div>' +
+    '</div></div>' +
+
+    '<div class="card"><div class="card-header"><div class="card-title">Section 3 — Financial Resolution</div></div><div class="card-body">' +
+      '<div style="font-size:13px;color:var(--muted);margin-bottom:14px;">Deposit held: <strong style="color:var(--white);">' + fmtMoney(bk.dep) + '</strong></div>' +
+      '<div class="fg"><label class="fl">Deposit Resolution *</label>' +
+        '<label style="display:flex;gap:8px;align-items:center;margin-bottom:8px;cursor:pointer;"><input type="radio" name="dep-res" value="release" onchange="updateReturnSummary();updateCompleteReturnBtn()"><span>Release full deposit — refund ' + fmtMoney(bk.dep) + ' to customer</span></label>' +
+        '<label style="display:flex;gap:8px;align-items:center;margin-bottom:8px;cursor:pointer;"><input type="radio" name="dep-res" value="keep" onchange="updateReturnSummary();updateCompleteReturnBtn()"><span>Keep full deposit — damage/loss</span></label>' +
+        '<label style="display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="radio" name="dep-res" value="split" onchange="updateReturnSummary();updateCompleteReturnBtn()"><span>Split deposit</span></label>' +
+        '<div id="dep-split-inputs" style="display:none;margin-top:10px;padding-left:22px;">' +
+          '<div class="fr"><div class="fg"><label class="fl">Keep ($)</label><input class="fi" id="dep-keep-amt" type="number" min="0" step="0.01" placeholder="0" oninput="updateReturnSummary()"></div>' +
+          '<div class="fg"><label class="fl">Refund ($)</label><input class="fi" id="dep-refund-amt" type="number" min="0" step="0.01" placeholder="0" oninput="updateReturnSummary()"></div></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="cpanel" id="ret-summary-panel" style="margin-top:14px;"></div>' +
+    '</div></div>' +
+
+    '<button class="btn btn-success" id="complete-return-btn" onclick="completeReturn()" style="width:100%;padding:14px;font-size:14px;letter-spacing:1px;margin-bottom:8px;" disabled>✓ Complete Return</button>' +
+    '<div><button class="btn btn-ghost" onclick="showPage(\'active-rentals\')">← Back to Bookings</button></div>';
+
+  updateReturnDiff();
+}
+
+function calcEarlyRefund(bk, actualDt, bookedDt) {
+  var earlyMs = bookedDt - actualDt;
+  if (earlyMs <= 0) return 0;
+  var earlyDays = Math.floor(earlyMs / 86400000);
+  if (earlyDays <= 0) return 0;
+  var totalDays = Math.max(1, Math.ceil(bk.days));
+  return Math.round((earlyDays / totalDays) * bk.rental * 100) / 100;
+}
+
+function updateReturnDiff() {
+  var bk = findBookingById(_processReturnId); if (!bk) return;
+  var retDateEl = g('ret-date'), retTimeEl = g('ret-time'); if (!retDateEl || !retTimeEl) return;
+  var endTime = bk.endTime || '12:00';
+  var booked = new Date(bk.ed + 'T' + endTime);
+  var actual = new Date(retDateEl.value + 'T' + (retTimeEl.value||'12:00'));
+  var diffMs = actual - booked;
+  var div = g('ret-diff-display'), earlySection = g('early-refund-section');
+  if (!div) return;
+  if (Math.abs(diffMs) < 3600000) {
+    div.innerHTML = '<div style="color:var(--success);font-size:13px;font-weight:600;">✓ Returned on time</div>';
+    if (earlySection) earlySection.style.display = 'none';
+  } else if (diffMs < 0) {
+    var earlyH = Math.abs(Math.round(diffMs / 3600000));
+    var earlyDays = Math.floor(earlyH / 24), earlyHRem = earlyH % 24;
+    var label = earlyDays > 0 ? earlyDays + ' day' + (earlyDays>1?'s':'') + (earlyHRem?' '+earlyHRem+' hr':'') : earlyH + ' hr' + (earlyH>1?'s':'');
+    var refAmt = calcEarlyRefund(bk, actual, booked);
+    var fullLabel = g('early-full-label');
+    if (fullLabel) fullLabel.textContent = 'Full refund of difference (' + fmtMoney(refAmt) + ')';
+    div.innerHTML = '<div style="color:var(--success);font-size:13px;font-weight:600;">↩ Returned ' + label + ' early' + (refAmt>0?' — rental difference: '+fmtMoney(refAmt):'') + '</div>';
+    if (earlySection) earlySection.style.display = '';
+  } else {
+    var lateH = Math.round(diffMs / 3600000);
+    var lateDays = Math.floor(lateH / 24), lateHRem = lateH % 24;
+    var lateLabel = lateDays > 0 ? lateDays + ' day' + (lateDays>1?'s':'') + (lateHRem?' '+lateHRem+' hr':'') + ' late' : lateH + ' hr' + (lateH>1?'s':'') + ' late';
+    div.innerHTML = '<div style="color:var(--warning);font-size:13px;font-weight:600;">⚠️ Returned ' + lateLabel + ' — additional charge may apply</div>';
+    if (earlySection) earlySection.style.display = 'none';
+  }
+  updateReturnSummary();
+  updateCompleteReturnBtn();
+}
+
+function updateEarlyRefundOptions() {
+  var v = (document.querySelector('input[name="early-refund"]:checked')||{}).value;
+  var pi = g('early-partial-input'); if (pi) pi.style.display = v==='partial'?'':'none';
+  updateReturnSummary();
+}
+
+function updateDamageSection() {
+  var t = g('damage-toggle'), s = g('damage-section');
+  if (s) s.style.display = (t&&t.checked)?'':'none';
+  updateCompleteReturnBtn();
+}
+
+function updateAdditionalCharge() {
+  var t = g('add-charge-toggle'), i = g('add-charge-inputs');
+  if (i) i.style.display = (t&&t.checked)?'':'none';
+  updateReturnSummary();
+}
+
+function updateReturnSummary() {
+  var bk = findBookingById(_processReturnId); if (!bk) return;
+  var div = g('ret-summary-panel'); if (!div) return;
+  var depRes = (document.querySelector('input[name="dep-res"]:checked')||{}).value||'';
+  var depRefund = 0;
+  if (depRes==='release') { depRefund = bk.dep; }
+  else if (depRes==='split') {
+    var re = g('dep-refund-amt'); depRefund = parseFloat(re&&re.value||0)||0;
+    var ds = g('dep-split-inputs'); if (ds) ds.style.display = '';
+  }
+  if (depRes!=='split') { var ds2 = g('dep-split-inputs'); if (ds2) ds2.style.display = 'none'; }
+
+  var earlyRes = (document.querySelector('input[name="early-refund"]:checked')||{}).value||'none';
+  var earlyRefund = 0;
+  if (earlyRes==='full') {
+    var rd = g('ret-date'), rt = g('ret-time');
+    if (rd&&rt) earlyRefund = calcEarlyRefund(bk, new Date(rd.value+'T'+(rt.value||'12:00')), new Date(bk.ed+'T'+(bk.endTime||'12:00')));
+  } else if (earlyRes==='partial') {
+    var pa = g('early-partial-amt'); earlyRefund = parseFloat(pa&&pa.value||0)||0;
+  }
+
+  var addCharge = 0, addLabel = '';
+  var act = g('add-charge-toggle');
+  if (act&&act.checked) {
+    var al = g('add-charge-label'), aa = g('add-charge-amount');
+    addLabel = al?al.value.trim():''; addCharge = parseFloat(aa&&aa.value||0)||0;
+  }
+
+  div.innerHTML = '<h4>Summary</h4>' +
+    '<div class="crow"><span class="cl">Deposit Refund</span><span class="cv' + (depRefund>0?' o':'') + '">' + (depRefund>0?fmtMoney(depRefund):'None') + '</span></div>' +
+    '<div class="crow"><span class="cl">Early Return Refund</span><span class="cv' + (earlyRefund>0?' o':'') + '">' + (earlyRefund>0?fmtMoney(earlyRefund):'N/A') + '</span></div>' +
+    '<div class="crow"><span class="cl">Additional Charge</span><span class="cv">' + (addCharge>0?(addLabel?escHtml(addLabel)+' — ':'')+fmtMoney(addCharge):'None') + '</span></div>' +
+    '<div class="crow" style="border-top:1px solid rgba(255,255,255,.08);margin-top:4px;padding-top:6px;"><span class="cl" style="color:var(--white);font-weight:700;">Net Refund to Customer</span><span class="cv o">' + fmtMoney(depRefund+earlyRefund) + '</span></div>' +
+    (addCharge>0?'<div class="crow"><span class="cl" style="color:var(--warning);">Additional Charge Owed</span><span class="cv" style="color:var(--warning);">' + fmtMoney(addCharge) + '</span></div>':'');
+}
+
+function updateCompleteReturnBtn() {
+  var btn = g('complete-return-btn'); if (!btn) return;
+  var req = ['ret-chk1','ret-chk2','ret-chk3','ret-chk4','ret-chk5'];
+  var dt = g('damage-toggle');
+  if (dt&&dt.checked) {
+    req.push('ret-chk6');
+    var dd = g('damage-desc'); if (!dd||!dd.value.trim()) { btn.disabled=true; return; }
+  }
+  var allChk = req.every(function(id){ var el=g(id); return el&&el.checked; });
+  var depSel = document.querySelector('input[name="dep-res"]:checked');
+  btn.disabled = !(allChk&&depSel);
+}
+
+async function completeReturn() {
+  var bk = findBookingById(_processReturnId); if (!bk) return;
+  var rdEl=g('ret-date'), rtEl=g('ret-time');
+  var actualDate=rdEl?rdEl.value:bk.ed, actualTime=rtEl?rtEl.value:'';
+  var depRes=(document.querySelector('input[name="dep-res"]:checked')||{}).value||'';
+  var depRefund=0;
+  if (depRes==='release') depRefund=bk.dep;
+  else if (depRes==='split') { var rfe=g('dep-refund-amt'); depRefund=parseFloat(rfe&&rfe.value||0)||0; }
+  var depStatus=depRes==='release'?'released':depRes==='keep'?'captured':'partial';
+
+  var earlyRes=(document.querySelector('input[name="early-refund"]:checked')||{}).value||'none';
+  var earlyRefund=0;
+  if (earlyRes==='full') earlyRefund=calcEarlyRefund(bk,new Date(actualDate+'T'+(actualTime||'12:00')),new Date(bk.ed+'T'+(bk.endTime||'12:00')));
+  else if (earlyRes==='partial') { var pa=g('early-partial-amt'); earlyRefund=parseFloat(pa&&pa.value||0)||0; }
+
+  var addCharge=0,addLabel='';
+  var act=g('add-charge-toggle');
+  if (act&&act.checked) { var al=g('add-charge-label'),aa=g('add-charge-amount'); addLabel=al?al.value.trim():''; addCharge=parseFloat(aa&&aa.value||0)||0; }
+
+  var dt2=g('damage-toggle'), hasDamage=dt2&&dt2.checked;
+  var damageDesc=hasDamage&&g('damage-desc')?g('damage-desc').value.trim():'';
+
+  var summary='Complete return for '+bk.c.fn+' '+bk.c.ln+'?\n\n';
+  summary+='Deposit: '+depRes+(depRefund>0?' (refund '+fmtMoney(depRefund)+')':'')+'\n';
+  if (earlyRefund>0) summary+='Early return refund: '+fmtMoney(earlyRefund)+'\n';
+  if (addCharge>0) summary+='Additional charge: '+(addLabel||'charge')+' — '+fmtMoney(addCharge)+'\n';
+  summary+='\nThis cannot be undone.';
+  if (!confirm(summary)) return;
+
+  var btn=g('complete-return-btn');
+  if (btn) { btn.disabled=true; btn.textContent='Processing...'; }
+
+  var notes=[];
+
+  if (depRefund>0) {
+    if (bk.paymentIntentId) {
+      try {
+        var r1=await fetch('/stripe/refund',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paymentIntentId:bk.paymentIntentId,amount:depRefund})});
+        var d1=await r1.json();
+        if (!r1.ok||d1.error) notes.push('Deposit refund error: '+(d1.error||'failed'));
+      } catch(e){ notes.push('Deposit refund: '+e.message); }
+    } else { notes.push('No Payment Intent ID — process deposit refund of '+fmtMoney(depRefund)+' manually in Stripe dashboard.'); }
+  }
+
+  if (earlyRefund>0) {
+    if (bk.paymentIntentId) {
+      try {
+        var r2=await fetch('/stripe/refund',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paymentIntentId:bk.paymentIntentId,amount:earlyRefund})});
+        var d2=await r2.json();
+        if (!r2.ok||d2.error) notes.push('Early return refund error: '+(d2.error||'failed'));
+      } catch(e){ notes.push('Early refund: '+e.message); }
+    } else { notes.push('No Payment Intent ID — process early return refund of '+fmtMoney(earlyRefund)+' manually in Stripe dashboard.'); }
+  }
+
+  var addChargeLinkUrl=null;
+  if (addCharge>0) {
+    try {
+      var r3=await fetch('/stripe/payment-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:addCharge,description:addLabel||'Additional charge',bookingId:bk.id,rentalAmount:addCharge,depositAmount:0})});
+      var d3=await r3.json();
+      if (!r3.ok||d3.error) notes.push('Additional charge link error: '+(d3.error||'failed'));
+      else addChargeLinkUrl=d3.url;
+    } catch(e){ notes.push('Additional charge link: '+e.message); }
+  }
+
+  bk.status='complete'; bk.returnedAt=new Date().toISOString();
+  bk.actualReturnDate=actualDate; bk.actualReturnTime=actualTime;
+  bk.depositStatus=depStatus; bk.depositRefundAmount=depRefund;
+  bk.earlyRefundAmount=earlyRefund; bk.earlyRefundType=earlyRes;
+  if (addCharge>0) bk.additionalCharge={label:addLabel,amount:addCharge,linkUrl:addChargeLinkUrl};
+  if (hasDamage) bk.damageNotes=damageDesc;
+  var t=findFleet(bk.tid);
+  if (t) { t.status='available'; t.renter=null; t.returnDate=null; }
+  state.rentals=state.rentals.filter(function(r){return r.id!==bk.id;});
+  state.done.push(bk); save(); updateStats();
+  addAct('Return complete: '+bk.c.fn+' '+bk.c.ln+' — '+bk.trailer,'green');
+
+  if (notes.length||addChargeLinkUrl) {
+    var msg=''; if (notes.length) msg+=notes.join('\n')+'\n\n';
+    if (addChargeLinkUrl) msg+='Additional charge link:\n'+addChargeLinkUrl;
+    if (msg.trim()) alert(msg.trim());
+  }
+  showToast('Rental complete');
+  showPage('dashboard');
 }
 
 function drawDrafts() {
