@@ -149,7 +149,7 @@ function showPage(id, skipPush) {
   if (id === 'active-rentals') drawActiveRentals();
   if (id === 'history') drawHistory();
   if (id === 'new-booking') drawAvail();
-  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); }
+  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGateCodeSettings(); }
   if (id === 'messages') drawMessages();
   if (id === 'agreement') drawFullAgr();
   if (id === 'notifications') drawNotifications();
@@ -540,13 +540,11 @@ function sendPackage() {
     var pnk = window._pendingBookingNotifKey; window._pendingBookingNotifKey = null;
     markHandled(pnk.key, pnk.id);
   }
-  setGate(0,'done','Package sent');
-  setGate(1,'active','Awaiting signature');
-  setGate(2,'locked','Locked — sign agreement first');
-  setGate(3,'locked','Locked — confirm payment first');
+  setGate(0,'active','Verify docs to proceed');
+  setGate(1,'locked','Locked — verify docs first');
+  setGate(2,'locked','Locked — confirm payment first');
+  setGate(3,'locked','Locked — send access info first');
   setGate(4,'locked','Send day before return');
-  var qs = g('quoteSent'); if (qs) qs.checked = true;
-  var ag = g('agrSigned'); if (ag) ag.checked = false;
   showToast('Package sent — booking saved');
   goStep(4, true);
 }
@@ -675,34 +673,189 @@ function onPaymentConfirmed() {
   addAct('Payment confirmed for ' + (state.booking.customer ? state.booking.customer.fn : 'customer'), 'green');
 }
 
-// ── STRIPE GATE 2 ────────────────────────────────────
-function drawGate2(bk) {
-  var sa = g('gate2-rental-section'); var sb = g('gate2-deposit-section');
-  if (!sa || !sb || !bk) return;
-  var aHtml = '<div class="stripe-section"><div class="stripe-section-label">💰 Rental Fee — $' + bk.rental + '</div>';
+// ── GATE FUNCTIONS ────────────────────────────────────
+
+function drawGate0(bk) {
+  var div = g('gate0-body'); if (!div || !bk) return;
+  var c = bk.c;
+  div.innerHTML =
+    '<div class="cpanel" style="margin-bottom:14px;"><h4>Booking</h4>' +
+      '<div class="crow"><span class="cl">Customer</span><span class="cv">' + escHtml(c.fn + ' ' + c.ln) + '</span></div>' +
+      '<div class="crow"><span class="cl">Trailer</span><span class="cv">' + escHtml(bk.trailer) + '</span></div>' +
+      '<div class="crow"><span class="cl">Pickup</span><span class="cv">' + bk.sd + (bk.startTime?' at '+bk.startTime:'') + '</span></div>' +
+      '<div class="crow"><span class="cl">Return</span><span class="cv">' + bk.ed + (bk.endTime?' at '+bk.endTime:'') + '</span></div>' +
+    '</div>' +
+    '<div class="fg"><label class="fl">Tow Vehicle (confirm or update if changed)</label>' +
+    '<input class="fi" id="gate0-vh" type="text" value="' + escHtml(c.vh||'') + '" placeholder="Year Make Model" oninput="updateGate0Vh()"></div>' +
+    '<div style="margin-bottom:14px;">' +
+      '<label style="display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="doc-chk1" style="accent-color:var(--primary);width:16px;height:16px;flex-shrink:0;" onchange="updateDocsBtn()"><span style="font-size:14px;">Driver\'s license photo received</span></label>' +
+      '<label style="display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="doc-chk2" style="accent-color:var(--primary);width:16px;height:16px;flex-shrink:0;" onchange="updateDocsBtn()"><span style="font-size:14px;">Vehicle insurance card received</span></label>' +
+      '<label style="display:flex;gap:10px;align-items:center;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="doc-chk3" style="accent-color:var(--primary);width:16px;height:16px;flex-shrink:0;" onchange="updateDocsBtn()"><span style="font-size:14px;">Tow vehicle confirmed</span></label>' +
+      '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;"><input type="checkbox" id="doc-chk4" style="accent-color:var(--primary);width:16px;height:16px;flex-shrink:0;" onchange="updateDocsBtn()"><span style="font-size:14px;">Quote reviewed and accepted by client</span></label>' +
+    '</div>' +
+    '<div class="fg"><label class="fl">Notes</label>' +
+    '<textarea class="form-textarea" id="gate0-notes" placeholder="Unusual circumstances, updated vehicle, etc.">' + escHtml(bk.docsNotes||'') + '</textarea></div>' +
+    '<button class="btn btn-success" id="docs-verified-btn" onclick="docsVerified()" style="width:100%;" disabled>✓ Docs Verified — Proceed to Payment</button>';
+}
+
+function updateDocsBtn() {
+  var btn = g('docs-verified-btn'); if (!btn) return;
+  btn.disabled = !['doc-chk1','doc-chk2','doc-chk3','doc-chk4'].every(function(id){ var el=g(id); return el&&el.checked; });
+}
+
+function docsVerified() {
+  var bk = findBookingById(state.booking.id); if (!bk) return;
+  if (!['doc-chk1','doc-chk2','doc-chk3','doc-chk4'].every(function(id){ var el=g(id); return el&&el.checked; })) { alert('Complete all checklist items first.'); return; }
+  var notesEl = g('gate0-notes'); if (notesEl) bk.docsNotes = notesEl.value;
+  bk.docsVerified = true; bk.status = 'payment_pending'; save();
+  setGate(0,'done','Docs verified');
+  setGate(1,'active','Generate payment link');
+  addAct('Docs verified: ' + bk.c.fn + ' ' + bk.c.ln, 'green');
+  drawGate1(bk);
+  showToast('Docs verified — proceed to payment');
+}
+
+function drawGate1(bk) {
+  var div = g('gate1-body'); if (!div || !bk) return;
+  var total = bk.grand;
   if (bk.paymentLinkUrl) {
-    aHtml += '<input class="stripe-link-input" type="text" readonly value="' + escHtml(bk.paymentLinkUrl) + '">' +
-      '<div style="display:flex;gap:8px;margin-bottom:6px;"><button class="btn btn-primary btn-sm" onclick="copyPayLink()">📋 Copy Link</button><button class="btn btn-ghost btn-sm" onclick="textPayLink()">💬 Text to ' + escHtml(bk.c.ph) + '</button></div>' +
-      '<div class="stripe-sent">✓ Rental link generated</div>';
+    var sendBtn1 = bk.c.contactPref==='email'
+      ? '<button class="btn btn-ghost btn-sm" onclick="sendGate1Link()">📧 Send via Email</button>'
+      : '<button class="btn btn-ghost btn-sm" onclick="sendGate1Link()">📱 Send via SMS</button>';
+    div.innerHTML =
+      '<div class="stripe-section"><div class="stripe-section-label">💰 Total — ' + fmtMoney(total) + '</div>' +
+        '<input class="stripe-link-input" type="text" readonly value="' + escHtml(bk.paymentLinkUrl) + '">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
+          '<button class="btn btn-primary btn-sm" onclick="copyGate1Link()">📋 Copy Link</button>' + sendBtn1 +
+        '</div><div class="stripe-sent">✓ Payment link generated</div></div>' +
+      '<button class="btn btn-success" onclick="confirmPaymentReceived()" style="width:100%;margin-top:12px;">✓ Mark Payment Received</button>';
   } else {
-    aHtml += '<button class="btn btn-primary" id="gen-pay-link-btn" onclick="generatePaymentLink()" style="width:100%;">🔗 Generate Rental Payment Link</button>';
+    var rentalAmt = bk.rental + (bk.addOnsTotal||0) + (bk.tax||0);
+    div.innerHTML =
+      '<div class="stripe-section"><div class="stripe-section-label">💰 Total — ' + fmtMoney(total) + '</div>' +
+        '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Rental: ' + fmtMoney(rentalAmt) + ' + Deposit: ' + fmtMoney(bk.dep) + '</div>' +
+        '<button class="btn btn-primary" id="gen-single-pay-btn" onclick="generateSinglePaymentLink()" style="width:100%;">🔗 Generate Payment Link</button></div>' +
+      '<button class="btn btn-success" onclick="confirmPaymentReceived()" style="width:100%;margin-top:12px;" disabled>✓ Mark Payment Received</button>';
   }
-  aHtml += '</div>';
-  sa.innerHTML = aHtml;
-  var bHtml = '<div class="stripe-section"><div class="stripe-section-label">🔐 Deposit Authorization Hold — $' + bk.dep + '</div>';
-  if (bk.depositSessionUrl) {
-    bHtml += '<input class="stripe-link-input" type="text" readonly value="' + escHtml(bk.depositSessionUrl) + '">' +
-      '<div style="display:flex;gap:8px;margin-bottom:6px;"><button class="btn btn-primary btn-sm" onclick="copyDepLink()">📋 Copy Link</button><button class="btn btn-ghost btn-sm" onclick="textDepLink()">💬 Text to ' + escHtml(bk.c.ph) + '</button></div>' +
-      '<div class="stripe-sent">✓ Deposit link generated</div>' +
-      '<div class="stripe-note">ℹ️ Authorization hold only — no charge unless damage occurs.</div>';
+}
+
+async function generateSinglePaymentLink() {
+  var bk = findBookingById(state.booking.id); if (!bk) return;
+  var btn = g('gen-single-pay-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+  try {
+    var rentalAmt = bk.rental + (bk.addOnsTotal||0) + (bk.tax||0);
+    var res = await fetch('/stripe/payment-link', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({amount:bk.grand, description:'Iron G — '+bk.trailer+' rental', bookingId:bk.id, rentalAmount:rentalAmt, depositAmount:bk.dep})});
+    var data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
+    bk.paymentLinkUrl = data.url; bk.paymentLinkId = data.id; save();
+    drawGate1(bk);
+  } catch(e) { alert('Error: ' + e.message); if (btn) { btn.disabled=false; btn.textContent='🔗 Generate Payment Link'; } }
+}
+
+function copyGate1Link() {
+  var bk = findBookingById(state.booking.id); if (!bk||!bk.paymentLinkUrl) return;
+  if (navigator.clipboard) navigator.clipboard.writeText(bk.paymentLinkUrl).catch(function(){});
+  showToast('Payment link copied!');
+}
+
+function sendGate1Link() {
+  var bk = findBookingById(state.booking.id); if (!bk||!bk.paymentLinkUrl) return;
+  var msg = 'Hi ' + bk.c.fn + ', here is your Iron G payment link: ' + bk.paymentLinkUrl + ' — Total: ' + fmtMoney(bk.grand) + ' (includes ' + fmtMoney(bk.dep) + ' refundable deposit). Reply with any questions. — Frank | Iron G Equipment Co.';
+  if (bk.c.contactPref==='email') {
+    window.location.href = 'mailto:' + encodeURIComponent(bk.c.em) + '?subject=' + encodeURIComponent('Iron G Payment Link') + '&body=' + encodeURIComponent(msg);
   } else {
-    bHtml += '<button class="btn btn-primary" id="gen-dep-link-btn" onclick="generateDepositHold()" style="width:100%;margin-bottom:8px;">🔐 Generate Deposit Hold Link</button>' +
-      '<div class="stripe-note">ℹ️ Authorization hold only — no charge unless damage occurs.</div>';
+    window.location.href = 'sms:' + bk.c.ph.replace(/\D/g,'') + '?body=' + encodeURIComponent(msg);
   }
-  bHtml += '</div>';
-  sb.innerHTML = bHtml;
-  var confirmBtn = g('payConfirmBtn');
-  if (confirmBtn) confirmBtn.disabled = !(bk.paymentLinkUrl && bk.depositIntentId);
+}
+
+function confirmPaymentReceived() {
+  var bk = findBookingById(state.booking.id); if (!bk) return;
+  if (!bk.paymentLinkUrl) { alert('Generate payment link first.'); return; }
+  if (!confirm('Confirm full payment of ' + fmtMoney(bk.grand) + ' received?')) return;
+  bk.rentalPaid = true; bk.depositHeld = true; bk.depositStatus = 'held';
+  bk.status = 'confirmed'; save();
+  setGate(1,'done','Payment received');
+  setGate(2,'active','Send access info');
+  addAct('Payment confirmed: ' + bk.c.fn + ' ' + bk.c.ln, 'green');
+  drawGate2(bk);
+  showToast('Payment confirmed — proceed to confirmation');
+}
+
+async function drawGate2(bk) {
+  var div = g('gate2-body'); if (!div || !bk) return;
+  var gateCode = null;
+  try { gateCode = await idbGet('gateCode'); } catch(e) {}
+  var lockCode = bk.lockboxCode || null;
+  var sendBtn2 = bk.c.contactPref==='email'
+    ? '<button class="btn btn-ghost btn-sm" onclick="sendAccessInfo()">📧 Send via Email</button>'
+    : '<button class="btn btn-ghost btn-sm" onclick="sendAccessInfo()">📱 Send via SMS</button>';
+  div.innerHTML =
+    '<div class="cpanel" style="margin-bottom:14px;"><h4>Access Codes</h4>' +
+      '<div class="crow"><span class="cl">Gate Code</span><span class="cv o" style="font-family:Oswald,sans-serif;letter-spacing:3px;">' + escHtml(gateCode||'Set gate code in Settings') + '</span></div>' +
+      '<div class="crow"><span class="cl">Lockbox Code</span><span class="cv o" style="font-family:Oswald,sans-serif;letter-spacing:3px;">' + escHtml(lockCode||'No lockbox code on file') + '</span></div>' +
+    '</div>' +
+    '<div class="msg-text" id="gate2-msg" style="background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:14px;margin-bottom:12px;"></div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">' +
+      '<button class="btn btn-primary btn-sm" onclick="copyGate2Msg()">📋 Copy</button>' + sendBtn2 +
+    '</div>' +
+    '<button class="btn btn-success" onclick="markConfirmedActive()" style="width:100%;">✓ Mark Confirmed &amp; Active</button>';
+  var msgEl = g('gate2-msg');
+  if (msgEl) msgEl.textContent = buildAccessInfoMsg(bk, gateCode, lockCode);
+}
+
+function buildAccessInfoMsg(bk, gateCode, lockCode) {
+  var c = bk.c;
+  var contactTarget = c.contactPref==='email' ? c.em : c.ph;
+  return 'Hi ' + c.fn + '! Your Iron G rental is confirmed. Here\'s everything you need:\n\n' +
+    '🚛 Trailer: ' + bk.trailer + '\n' +
+    '📅 Pickup: ' + bk.sd + (bk.startTime?' at '+bk.startTime:'') + '\n' +
+    '📅 Return: ' + bk.ed + (bk.endTime?' at '+bk.endTime:'') + '\n' +
+    '📍 Mother Road RV Boat & Trailer Storage\n' +
+    '   16245 W HWY 66, Yukon, OK 73099\n' +
+    '🔐 Gate Code: ' + (gateCode||'Set gate code in Settings') + '\n' +
+    '🔑 Lockbox Code: ' + (lockCode||'No lockbox code on file') + ' (contains your coupler lock combo)\n\n' +
+    'IMPORTANT RETURN INSTRUCTIONS:\n' +
+    '- Return trailer by ' + bk.ed + (bk.endTime?' at '+bk.endTime:'') + '\n' +
+    '- Late returns may result in additional charges\n' +
+    '- To complete your return, send to ' + contactTarget + ':\n' +
+    '  - Minimum 4 photos: front, rear, driver side, passenger side\n' +
+    '  - Additional photos if any damage\n' +
+    '  - 1 walk-around video\n' +
+    '- Lock the coupler on return\n\n' +
+    'Questions? Call or text Frank at (405) 393-4161\n\n' +
+    '— Iron G Equipment Co.';
+}
+
+function copyGate2Msg() {
+  var el = g('gate2-msg'); if (!el) return;
+  var text = el.textContent;
+  function fb() { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta); }
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).catch(fb); } else { fb(); }
+  showToast('Message copied!');
+}
+
+function sendAccessInfo() {
+  var bk = findBookingById(state.booking.id); if (!bk) return;
+  var el = g('gate2-msg'); if (!el) return;
+  var msg = el.textContent; var c = bk.c;
+  if (c.contactPref==='email') {
+    window.location.href = 'mailto:' + encodeURIComponent(c.em) + '?subject=' + encodeURIComponent('Iron G — Your Rental Confirmation') + '&body=' + encodeURIComponent(msg);
+  } else {
+    window.location.href = 'sms:' + c.ph.replace(/\D/g,'') + '?body=' + encodeURIComponent(msg);
+  }
+}
+
+function markConfirmedActive() {
+  var bk = findBookingById(state.booking.id); if (!bk) return;
+  if (!confirm('Mark booking active for ' + bk.c.fn + ' ' + bk.c.ln + '?')) return;
+  bk.status = 'active'; bk.confirmedAt = new Date().toISOString(); save();
+  addAct('Booking active: ' + bk.c.fn + ' ' + bk.c.ln + ' — ' + bk.trailer, 'green');
+  setGate(2,'done','Sent');
+  updateStats(); drawDashboard();
+  showToast('Booking active!');
+  showPage('dashboard');
 }
 
 async function generatePaymentLink() {
@@ -1004,7 +1157,7 @@ function buildMessages(bk, trailer) {
     cm.innerHTML = html;
   }
   var ap = g('agreementPreview'); if (ap) ap.innerHTML = makeAgrHTML(bk, biz, ph, em);
-  drawGate2(bk);
+  drawGate0(bk);
 }
 
 function makeAgrHTML(bk, biz, ph, em) {
@@ -1390,6 +1543,48 @@ function drawFleetSettings() {
       '<div style="font-size:13px;color:var(--muted);">Status: <span class="badge b-' + t.status + '" style="margin-left:6px;">' + t.status + '</span></div></div>';
   });
   div.innerHTML = h;
+}
+
+// ── GATE CODE SETTINGS ───────────────────────────────
+async function loadGateCodeSettings() {
+  var div = g('gateCodeSection'); if (!div) return;
+  var code = null;
+  try { code = await idbGet('gateCode'); } catch(e) {}
+  renderGateCodeSettings(code, div);
+}
+
+function renderGateCodeSettings(code, div) {
+  if (!div) return;
+  div.innerHTML =
+    (code
+      ? '<div style="font-family:Oswald,sans-serif;font-size:22px;font-weight:700;color:var(--primary);letter-spacing:4px;margin-bottom:8px;">' + escHtml(String(code)) + '</div>'
+      : '<div style="color:var(--muted);font-size:13px;margin-bottom:8px;">No gate code set</div>') +
+    '<button class="btn btn-ghost btn-sm" onclick="editGateCode()">✏️ Edit Gate Code</button>';
+}
+
+function editGateCode() {
+  var div = g('gateCodeSection'); if (!div) return;
+  div.innerHTML =
+    '<input class="fi" id="gate-code-inp" type="text" maxlength="10" placeholder="Enter gate code" style="margin-bottom:8px;">' +
+    '<div style="display:flex;gap:8px;">' +
+      '<button class="btn btn-primary btn-sm" onclick="saveGateCode()">Save</button>' +
+      '<button class="btn btn-ghost btn-sm" onclick="loadGateCodeSettings()">Cancel</button>' +
+    '</div>';
+  var el = g('gate-code-inp');
+  if (el) {
+    idbGet('gateCode').then(function(code){ if (el && code) el.value = code; });
+    el.focus();
+  }
+}
+
+async function saveGateCode() {
+  var el = g('gate-code-inp'); if (!el) return;
+  var code = el.value.trim();
+  if (!code) { alert('Enter a gate code.'); return; }
+  await idbPut('gateCode', code).catch(function(){});
+  var div = g('gateCodeSection');
+  renderGateCodeSettings(code, div);
+  showToast('Gate code saved');
 }
 
 function drawMessages() {

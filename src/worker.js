@@ -59,6 +59,10 @@ export default {
       return handleStripeDepositCancel(request, env);
     }
 
+    if (url.pathname === '/stripe/refund' && request.method === 'POST') {
+      return handleStripeRefund(request, env);
+    }
+
     return env.ASSETS.fetch(request);
   },
 };
@@ -105,7 +109,7 @@ async function stripePost(path, params, secretKey) {
 async function handleStripePaymentLink(request, env) {
   const cors = getCors(request);
   try {
-    const { amount, description, bookingId } = await request.json();
+    const { amount, description, bookingId, rentalAmount, depositAmount } = await request.json();
     const amountCents = Math.round(amount * 100);
 
     const res = await stripePost('/payment_links', {
@@ -113,12 +117,17 @@ async function handleStripePaymentLink(request, env) {
         {
           price_data: {
             currency: 'usd',
-            product_data: { name: description },
+            product_data: { name: description || ('Iron G — Trailer Rental #' + bookingId) },
             unit_amount: amountCents,
           },
           quantity: 1,
         },
       ],
+      metadata: {
+        bookingId: String(bookingId || ''),
+        rentalAmount: String(rentalAmount || ''),
+        depositAmount: String(depositAmount || ''),
+      },
     }, env.STRIPE_SECRET_KEY);
 
     const data = await res.json();
@@ -238,6 +247,36 @@ async function handleStripeDepositCancel(request, env) {
     });
   } catch (err) {
     console.error('[IronG] handleStripeDepositCancel error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleStripeRefund(request, env) {
+  const cors = getCors(request);
+  try {
+    const { paymentIntentId, amount } = await request.json();
+    const amountCents = Math.round(amount * 100);
+    const res = await stripePost('/refunds', {
+      payment_intent: paymentIntentId,
+      amount: amountCents,
+    }, env.STRIPE_SECRET_KEY);
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('[IronG] Stripe refund error:', data);
+      return new Response(JSON.stringify({ error: data.error?.message || 'Stripe error' }), {
+        status: 500,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ refundId: data.id, status: data.status, amount: data.amount / 100 }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] handleStripeRefund error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },

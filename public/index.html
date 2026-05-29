@@ -186,65 +186,34 @@
         <button class="btn btn-ghost btn-sm" style="margin-left:auto;" onclick="goStep(1)">Change</button>
       </div>
 
-      <!-- GATE 0: Send Pre-Booking Package -->
+      <!-- GATE 0: Docs Verification -->
       <div class="gate-section gate-active" id="gate0">
         <div class="gate-header">
           <div class="gate-num">0</div>
-          <div class="gate-title">Send Pre-Booking Package</div>
-          <div class="gate-status" id="gate0-status">Send before agreement</div>
+          <div class="gate-title">Docs Verification</div>
+          <div class="gate-status" id="gate0-status">Verify before payment</div>
         </div>
-        <div class="msg">
-          <div class="msg-label">📦 Pre-Booking Package Message</div>
-          <div class="msg-text" id="msg-quote"></div>
-          <div class="msg-actions">
-            <button class="btn btn-primary btn-sm" onclick="packageSent('msg-quote','copy')">📋 Copy Message</button>
-            <button class="btn btn-ghost btn-sm" onclick="packageSent('msg-quote','sms')">💬 Open SMS</button>
-          </div>
-        </div>
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;">
-          <label style="display:flex;gap:10px;align-items:center;cursor:pointer;">
-            <input type="checkbox" id="quoteSent" style="accent-color:var(--success);width:18px;height:18px;flex-shrink:0;" onchange="onQuoteSent()">
-            <span style="font-size:13px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Package sent — awaiting docs</span>
-          </label>
-        </div>
-        <div class="fg" style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;">
-          <label class="fl">Tow Vehicle (confirm or update if changed)</label>
-          <input class="fi" id="gate0-vh" type="text" placeholder="Year Make Model" oninput="updateGate0Vh()">
-        </div>
+        <div id="gate0-body"></div>
       </div>
 
-      <!-- GATE 1: Rental Agreement -->
+      <!-- GATE 1: Payment -->
       <div class="gate-section gate-locked" id="gate1">
         <div class="gate-header">
           <div class="gate-num">1</div>
-          <div class="gate-title">Send Rental Agreement &amp; Get Signature</div>
-          <div class="gate-status" id="gate1-status">Locked — send package first</div>
+          <div class="gate-title">Payment</div>
+          <div class="gate-status" id="gate1-status">Locked — verify docs first</div>
         </div>
-        <div id="print-agreement"><div class="agr" id="agreementPreview"></div></div>
-        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary btn-sm" onclick="window.print()">🖨️ Print / Save PDF</button>
-          <button class="btn btn-ghost btn-sm" onclick="copyEl('agreementPreview')">📋 Copy Agreement Text</button>
-        </div>
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;">
-          <label style="display:flex;gap:10px;align-items:center;cursor:pointer;">
-            <input type="checkbox" id="agrSigned" style="accent-color:var(--success);width:18px;height:18px;flex-shrink:0;" onchange="onAgrSigned()">
-            <span style="font-size:13px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Agreement has been signed by customer</span>
-          </label>
-        </div>
+        <div id="gate1-body"></div>
       </div>
 
-      <!-- GATE 2: Stripe Payment Links -->
+      <!-- GATE 2: Send Access Info -->
       <div class="gate-section gate-locked" id="gate2">
         <div class="gate-header">
           <div class="gate-num">2</div>
-          <div class="gate-title">Send Payment Links</div>
-          <div class="gate-status" id="gate2-status">Locked — sign agreement first</div>
+          <div class="gate-title">Send Access Info</div>
+          <div class="gate-status" id="gate2-status">Locked — confirm payment first</div>
         </div>
-        <div id="gate2-rental-section" style="margin-bottom:12px;"></div>
-        <div id="gate2-deposit-section" style="margin-bottom:12px;"></div>
-        <div style="padding-top:14px;border-top:1px solid #1a1a1a;">
-          <button class="btn btn-success" style="width:100%;" id="payConfirmBtn" onclick="onPaymentConfirmed()" disabled>✓ Mark Payment Received &amp; Deposit Held</button>
-        </div>
+        <div id="gate2-body"></div>
       </div>
 
       <!-- GATE 3: Pickup Instructions -->
@@ -346,6 +315,8 @@
       <div class="fg"><label class="fl">Square Payment Link</label><input class="fi" id="s-sq" placeholder="https://square.link/..."></div>
       <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
     </div></div>
+
+    <div class="card"><div class="card-header"><div class="card-title">Gate Code</div></div><div class="card-body" id="gateCodeSection"><div style="color:var(--muted);font-size:13px;">Loading...</div></div></div>
 
     <div class="card"><div class="card-header"><div class="card-title">Fleet Status</div></div><div class="card-body" id="fleetSettings"></div></div>
 
