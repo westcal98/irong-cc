@@ -746,12 +746,11 @@ async function generateSinglePaymentLink() {
   var btn = g('gen-single-pay-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
   try {
-    var rentalAmt = bk.rental + (bk.addOnsTotal||0) + (bk.tax||0);
-    var res = await fetch('/stripe/payment-link', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({amount:bk.grand, description:'Iron G — '+bk.trailer+' rental', bookingId:bk.id, rentalAmount:rentalAmt, depositAmount:bk.dep})});
+    var res = await fetch('/stripe/checkout-session', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({bookingId:bk.id, rentalAmount:bk.rental, addOnsTotal:bk.addOnsTotal||0, tax:bk.tax||0, dep:bk.dep, addOns:bk.addOns||[], trailerName:bk.trailer, firstName:bk.c.fn})});
     var data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
-    bk.paymentLinkUrl = data.url; bk.paymentLinkId = data.id; save();
+    bk.paymentLinkUrl = data.url; bk.checkoutSessionId = data.sessionId; save();
     drawGate1(bk);
   } catch(e) { alert('Error: ' + e.message); if (btn) { btn.disabled=false; btn.textContent='🔗 Generate Payment Link'; } }
 }
@@ -772,7 +771,7 @@ function sendGate1Link() {
   }
 }
 
-function confirmPaymentReceived() {
+async function confirmPaymentReceived() {
   var bk = findBookingById(state.booking.id); if (!bk) return;
   if (!bk.paymentLinkUrl) { alert('Generate payment link first.'); return; }
   if (!confirm('Confirm full payment of ' + fmtMoney(bk.grand) + ' received?')) return;
@@ -784,13 +783,41 @@ function confirmPaymentReceived() {
   if (g1div) {
     g1div.innerHTML =
       '<div style="color:var(--success);font-size:13px;margin-bottom:10px;">✓ Payment received — ' + fmtMoney(bk.grand) + '</div>' +
-      '<div class="alert ai" style="font-size:12px;margin-bottom:10px;">To process refunds, retrieve the Payment Intent ID from your Stripe dashboard and enter it here.</div>' +
-      '<div class="fg"><label class="fl">Payment Intent ID (for refunds)</label>' +
-      '<input class="fi" id="gate1-pi-id" type="text" placeholder="pi_..." value="' + escHtml(bk.paymentIntentId||'') + '" oninput="savePaymentIntentId()"></div>';
+      '<div id="gate1-pi-status" style="font-size:12px;color:var(--muted);margin-bottom:10px;">Retrieving payment details...</div>';
   }
   addAct('Payment confirmed: ' + bk.c.fn + ' ' + bk.c.ln, 'green');
   drawGate2(bk);
   showToast('Payment confirmed — proceed to confirmation');
+  var attempts = 0;
+  var pollTimer = setInterval(async function() {
+    attempts++;
+    try {
+      var res = await fetch('/booking/' + bk.id + '/payment-intent');
+      var data = await res.json();
+      if (data.paymentIntentId) {
+        clearInterval(pollTimer);
+        bk.paymentIntentId = data.paymentIntentId; save();
+        var statusEl = g('gate1-pi-status');
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--success);">✓ Payment verified</span>';
+        return;
+      }
+    } catch(e) {}
+    if (attempts >= 5) {
+      clearInterval(pollTimer);
+      var statusEl = g('gate1-pi-status');
+      if (statusEl) {
+        statusEl.innerHTML =
+          '<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Payment Intent ID not found automatically. Find this in your Stripe dashboard under Payments.</div>' +
+          '<div class="fg"><label class="fl">Payment Intent ID (for refunds)</label>' +
+          '<input class="fi" id="gate1-pi-id" type="text" placeholder="pi_..." value="' + escHtml(bk.paymentIntentId||'') + '" oninput="savePaymentIntentId()"></div>' +
+          '<button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="skipPaymentIntent()">Skip for now</button>';
+      }
+    }
+  }, 3000);
+}
+
+function skipPaymentIntent() {
+  var el = g('gate1-pi-status'); if (el) el.style.display = 'none';
 }
 
 async function drawGate2(bk) {
@@ -873,11 +900,11 @@ async function generatePaymentLink() {
   var btn = g('gen-pay-link-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
   try {
-    var res = await fetch('/stripe/payment-link', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({amount:bk.rental, description:'Iron G — '+bk.days+'-day '+bk.trailer+' rental', bookingId:bk.id}) });
+    var res = await fetch('/stripe/checkout-session', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({bookingId:bk.id, rentalAmount:bk.rental, addOnsTotal:bk.addOnsTotal||0, tax:bk.tax||0, dep:bk.dep, addOns:bk.addOns||[], trailerName:bk.trailer, firstName:bk.c.fn}) });
     var data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
-    bk.paymentLinkUrl = data.url; bk.paymentLinkId = data.id; save(); drawGate2(bk);
+    bk.paymentLinkUrl = data.url; bk.checkoutSessionId = data.sessionId; save(); drawGate2(bk);
   } catch(e) { alert('Error generating payment link: ' + e.message); if (btn) { btn.disabled=false; btn.textContent='🔗 Generate Rental Payment Link'; } }
 }
 
@@ -1798,7 +1825,7 @@ async function completeReturn() {
   var addChargeLinkUrl=null;
   if (addCharge>0) {
     try {
-      var r3=await fetch('/stripe/payment-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:addCharge,description:addLabel||'Additional charge',bookingId:bk.id,rentalAmount:addCharge,depositAmount:0})});
+      var r3=await fetch('/stripe/checkout-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bookingId:bk.id,rentalAmount:addCharge,addOnsTotal:0,tax:0,dep:0,addOns:[],trailerName:bk.trailer,firstName:bk.c.fn})});
       var d3=await r3.json();
       if (!r3.ok||d3.error) notes.push('Additional charge link error: '+(d3.error||'failed'));
       else addChargeLinkUrl=d3.url;
@@ -2077,17 +2104,35 @@ async function initApp() {
   updateStats(); drawDashboard(); drawFleet(); showPage('dashboard', true);
   fetchNotifications(); setInterval(fetchNotifications, 60000);
   initPushNotifications();
+  var urlParams = new URLSearchParams(window.location.search);
+  var paymentStatus = urlParams.get('payment');
+  var paymentBookingId = urlParams.get('bookingId');
+  if (paymentStatus && paymentBookingId) {
+    window.history.replaceState({}, '', '/');
+    var payBk = findBookingById(parseInt(paymentBookingId, 10));
+    if (paymentStatus === 'success') {
+      showToast('✓ Payment received — booking ' + paymentBookingId);
+      if (payBk) { state.booking.id = payBk.id; showPage('active-rentals'); }
+    } else if (paymentStatus === 'cancelled') {
+      showToast('Payment cancelled — resend payment link if needed');
+      if (payBk) { state.booking.id = payBk.id; showPage('active-rentals'); }
+    }
+  }
 }
 
 // ── NOTIFICATIONS ─────────────────────────────────────
 var notifications = [];
+var webhookAlerts = [];
 var notifBadgeCount = 0;
 
 async function fetchNotifications() {
   try {
-    var res = await fetch('/notifications?handled=false'); if (!res.ok) return;
-    notifications = await res.json();
-    notifBadgeCount = Array.isArray(notifications) ? notifications.length : 0;
+    var notifRes = await fetch('/notifications?handled=false');
+    var alertRes = await fetch('/webhook/alerts?handled=false');
+    if (notifRes.ok) notifications = await notifRes.json();
+    if (alertRes.ok) webhookAlerts = await alertRes.json(); else webhookAlerts = [];
+    var urgentCount = webhookAlerts.filter(function(a){ return a.urgent; }).length;
+    notifBadgeCount = (Array.isArray(notifications) ? notifications.length : 0) + urgentCount;
     updateNotifBadge();
     if (currentPage === 'notifications') drawNotifications();
   } catch(e) { console.error('[IronG] fetchNotifications error:', e); }
@@ -2132,39 +2177,97 @@ function notifDetailRow(label, val) {
 
 function drawNotifications() {
   var container = g('notifBody'); if (!container) return;
-  if (!notifications.length) { container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No new requests. You\'re all caught up.</div>'; return; }
-  var h = '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + notifications.length + ' unhandled request' + (notifications.length>1?'s':'') + '</div>';
-  notifications.forEach(function(n) {
-    var isRental = n.type === 'rental';
-    h += '<div class="notif-card">' +
+  var urgentAlerts = webhookAlerts.filter(function(a){ return a.urgent; });
+  var nonUrgentAlerts = webhookAlerts.filter(function(a){ return !a.urgent; });
+  if (!notifications.length && !webhookAlerts.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No new requests. You\'re all caught up.</div>';
+    return;
+  }
+  var h = '';
+  urgentAlerts.forEach(function(a) {
+    var bkLink = (a.bookingId && a.bookingId !== 'unknown')
+      ? '<span style="cursor:pointer;text-decoration:underline;color:var(--white);" onclick="showBooking(\'' + escHtml(String(a.bookingId)) + '\')">#' + escHtml(String(a.bookingId)) + '</span>'
+      : '—';
+    h += '<div class="notif-card notif-alert-urgent">' +
       '<div class="notif-card-header">' +
-        '<span class="notif-type-badge ' + (isRental?'ntb-rental':'ntb-info') + '">' + (isRental?'RENTAL':'INFO') + '</span>' +
-        '<div class="notif-name">' + (n.name||'—') + '</div>' +
-        '<div class="notif-meta">' + relativeTime(n.receivedAt) + '</div>' +
+        '<span class="notif-type-badge ntb-urgent">⚠️ URGENT</span>' +
+        '<div class="notif-name">' + bkLink + '</div>' +
       '</div>' +
-      '<div class="notif-quick">' +
-        '<div class="notif-field"><span class="notif-label">Phone</span><a class="notif-phone" href="tel:' + (n.phone||'').replace(/\D/g,'') + '">' + (n.phone||'—') + '</a></div>' +
-        '<div class="notif-field"><span class="notif-label">Trailer</span><span class="notif-value">' + (n.trailer||'—') + '</span></div>' +
-        '<div class="notif-field"><span class="notif-label">Start Date</span><span class="notif-value">' + (n.startDate||'—') + '</span></div>' +
-      '</div>' +
-      '<div class="notif-detail" id="nd-' + n.id + '" style="display:none;">' +
-        '<div style="height:1px;background:#1a1a1a;margin:12px 0;"></div>' +
-        notifDetailRow('Name',n.name) + notifDetailRow('Phone',n.phone) + notifDetailRow('Email',n.email) +
-        notifDetailRow('City',n.city) + notifDetailRow('Trailer',n.trailer) + notifDetailRow('Start Date',n.startDate) +
-        notifDetailRow('Duration',n.duration) + notifDetailRow('Tow Vehicle',n.towVehicle) +
-        notifDetailRow('Hauling',n.hauling) + notifDetailRow('Referral',n.referral) +
-        notifDetailRow('Notes',n.notes) + notifDetailRow('Source',n.source) +
-        notifDetailRow('Submitted',n.timestamp) + notifDetailRow('Received',n.receivedAt) +
-        notifDetailRow('Email Sent',n.emailSent?'Yes':'No') +
-      '</div>' +
+      '<div style="font-size:13px;color:var(--text);margin:8px 0;">' + escHtml(a.message||'') + '</div>' +
       '<div class="notif-actions">' +
-        '<button class="btn btn-ghost btn-sm" id="ndb-' + n.id + '" onclick="toggleNotifDetail(' + n.id + ')">View Details</button>' +
-        '<button class="btn btn-primary btn-sm" onclick="createBookingFromNotif(' + n.id + ')">📋 Create Booking</button>' +
-        '<button class="btn btn-success btn-sm" onclick="markHandled(\'submission:' + n.id + '\',' + n.id + ')">✓ Mark Handled</button>' +
+        (a.type === 'dispute' ? '<button class="btn btn-danger btn-sm" onclick="window.open(\'https://dashboard.stripe.com/disputes\',\'_blank\')">Open Stripe Dashboard</button>' : '') +
+        '<button class="btn btn-success btn-sm" onclick="markWebhookAlertHandled(\'' + escHtml(a._key||'') + '\')">✓ Mark Handled</button>' +
+      '</div>' +
+    '</div>';
+  });
+  if (notifications.length) {
+    h += '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + notifications.length + ' unhandled request' + (notifications.length>1?'s':'') + '</div>';
+    notifications.forEach(function(n) {
+      var isRental = n.type === 'rental';
+      h += '<div class="notif-card">' +
+        '<div class="notif-card-header">' +
+          '<span class="notif-type-badge ' + (isRental?'ntb-rental':'ntb-info') + '">' + (isRental?'RENTAL':'INFO') + '</span>' +
+          '<div class="notif-name">' + (n.name||'—') + '</div>' +
+          '<div class="notif-meta">' + relativeTime(n.receivedAt) + '</div>' +
+        '</div>' +
+        '<div class="notif-quick">' +
+          '<div class="notif-field"><span class="notif-label">Phone</span><a class="notif-phone" href="tel:' + (n.phone||'').replace(/\D/g,'') + '">' + (n.phone||'—') + '</a></div>' +
+          '<div class="notif-field"><span class="notif-label">Trailer</span><span class="notif-value">' + (n.trailer||'—') + '</span></div>' +
+          '<div class="notif-field"><span class="notif-label">Start Date</span><span class="notif-value">' + (n.startDate||'—') + '</span></div>' +
+        '</div>' +
+        '<div class="notif-detail" id="nd-' + n.id + '" style="display:none;">' +
+          '<div style="height:1px;background:#1a1a1a;margin:12px 0;"></div>' +
+          notifDetailRow('Name',n.name) + notifDetailRow('Phone',n.phone) + notifDetailRow('Email',n.email) +
+          notifDetailRow('City',n.city) + notifDetailRow('Trailer',n.trailer) + notifDetailRow('Start Date',n.startDate) +
+          notifDetailRow('Duration',n.duration) + notifDetailRow('Tow Vehicle',n.towVehicle) +
+          notifDetailRow('Hauling',n.hauling) + notifDetailRow('Referral',n.referral) +
+          notifDetailRow('Notes',n.notes) + notifDetailRow('Source',n.source) +
+          notifDetailRow('Submitted',n.timestamp) + notifDetailRow('Received',n.receivedAt) +
+          notifDetailRow('Email Sent',n.emailSent?'Yes':'No') +
+        '</div>' +
+        '<div class="notif-actions">' +
+          '<button class="btn btn-ghost btn-sm" id="ndb-' + n.id + '" onclick="toggleNotifDetail(' + n.id + ')">View Details</button>' +
+          '<button class="btn btn-primary btn-sm" onclick="createBookingFromNotif(' + n.id + ')">📋 Create Booking</button>' +
+          '<button class="btn btn-success btn-sm" onclick="markHandled(\'submission:' + n.id + '\',' + n.id + ')">✓ Mark Handled</button>' +
+        '</div>' +
+      '</div>';
+    });
+  }
+  nonUrgentAlerts.forEach(function(a) {
+    var bkLink = (a.bookingId && a.bookingId !== 'unknown')
+      ? '<span style="cursor:pointer;text-decoration:underline;color:var(--white);" onclick="showBooking(\'' + escHtml(String(a.bookingId)) + '\')">#' + escHtml(String(a.bookingId)) + '</span>'
+      : '—';
+    h += '<div class="notif-card notif-alert-warn">' +
+      '<div class="notif-card-header">' +
+        '<span class="notif-type-badge ntb-warn">' + escHtml((a.type||'alert').toUpperCase().replace(/_/g,' ')) + '</span>' +
+        '<div class="notif-name">' + bkLink + '</div>' +
+      '</div>' +
+      '<div style="font-size:13px;color:var(--text);margin:8px 0;">' + escHtml(a.message||'') + '</div>' +
+      '<div class="notif-actions">' +
+        '<button class="btn btn-success btn-sm" onclick="markWebhookAlertHandled(\'' + escHtml(a._key||'') + '\')">✓ Mark Handled</button>' +
       '</div>' +
     '</div>';
   });
   container.innerHTML = h;
+}
+
+async function markWebhookAlertHandled(key) {
+  try {
+    var res = await fetch('/webhook/alerts/handled', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:key})});
+    if (!res.ok) { console.error('[IronG] markWebhookAlertHandled failed'); return; }
+    webhookAlerts = webhookAlerts.filter(function(a){ return a._key !== key; });
+    var urgentCount = webhookAlerts.filter(function(a){ return a.urgent; }).length;
+    notifBadgeCount = (Array.isArray(notifications) ? notifications.length : 0) + urgentCount;
+    updateNotifBadge(); drawNotifications();
+  } catch(e) { console.error('[IronG] markWebhookAlertHandled error:', e); }
+}
+
+function showBooking(bookingId) {
+  var id = parseInt(bookingId, 10);
+  var bk = findBookingById(id);
+  if (!bk) { showToast('Booking #' + bookingId + ' not found'); return; }
+  state.booking.id = id;
+  showPage(bk.status === 'complete' ? 'history' : 'active-rentals');
 }
 
 // ── WEB PUSH ─────────────────────────────────────────

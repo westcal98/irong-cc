@@ -290,3 +290,9 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 .addon-custom-input{flex:2;}
 .addon-custom-amt{flex:1;}
 .addon-custom{cursor:default;}
+
+/* ── WEBHOOK ALERT CARDS ── */
+.notif-alert-urgent{border-top:3px solid var(--danger);background:rgba(224,85,85,.06);}
+.ntb-urgent{background:rgba(224,85,85,.2);color:var(--danger);border:1px solid rgba(224,85,85,.4);}
+.notif-alert-warn{border-top:3px solid var(--warning);background:rgba(255,167,38,.04);}
+.ntb-warn{background:rgba(255,167,38,.15);color:var(--warning);border:1px solid rgba(255,167,38,.3);}
