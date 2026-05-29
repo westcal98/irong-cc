@@ -43,8 +43,25 @@ export default {
       });
     }
 
-    if (url.pathname === '/stripe/payment-link' && request.method === 'POST') {
-      return handleStripePaymentLink(request, env);
+    if (url.pathname === '/stripe/checkout-session' && request.method === 'POST') {
+      return handleStripeCheckoutSession(request, env);
+    }
+
+    if (url.pathname === '/stripe/webhook' && request.method === 'POST') {
+      return handleStripeWebhook(request, env);
+    }
+
+    if (url.pathname === '/webhook/alerts' && request.method === 'GET') {
+      return handleGetWebhookAlerts(request, env);
+    }
+
+    if (url.pathname === '/webhook/alerts/handled' && request.method === 'POST') {
+      return handleMarkWebhookAlertHandled(request, env);
+    }
+
+    if (url.pathname.startsWith('/booking/') && url.pathname.endsWith('/payment-intent') && request.method === 'GET') {
+      const bookingId = url.pathname.split('/')[2];
+      return handleGetPaymentIntent(request, env, bookingId);
     }
 
     if (url.pathname === '/stripe/deposit-intent' && request.method === 'POST') {
@@ -106,45 +123,84 @@ async function stripePost(path, params, secretKey) {
 
 // ── STRIPE ROUTE HANDLERS ──────────────────────────────
 
-async function handleStripePaymentLink(request, env) {
+async function handleStripeCheckoutSession(request, env) {
   const cors = getCors(request);
   try {
-    const { amount, description, bookingId, rentalAmount, depositAmount } = await request.json();
-    const amountCents = Math.round(amount * 100);
+    const { bookingId, rentalAmount, addOnsTotal, tax, dep, addOns, trailerName, firstName } = await request.json();
 
-    const res = await stripePost('/payment_links', {
-      line_items: [
-        {
+    const lineItems = [
+      {
+        price_data: {
+          currency: 'usd',
+          product_data: { name: 'Rental Fee — ' + trailerName },
+          unit_amount: Math.round(rentalAmount * 100),
+        },
+        quantity: 1,
+      },
+    ];
+
+    if (addOns && Array.isArray(addOns)) {
+      for (const addOn of addOns) {
+        lineItems.push({
           price_data: {
             currency: 'usd',
-            product_data: { name: description || ('Iron G — Trailer Rental #' + bookingId) },
-            unit_amount: amountCents,
+            product_data: { name: addOn.name },
+            unit_amount: Math.round(addOn.amount * 100),
           },
           quantity: 1,
-        },
-      ],
-      metadata: {
-        bookingId: String(bookingId || ''),
-        rentalAmount: String(rentalAmount || ''),
-        depositAmount: String(depositAmount || ''),
+        });
+      }
+    }
+
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: { name: 'Tax (8.85%)' },
+        unit_amount: Math.round(tax * 100),
       },
+      quantity: 1,
+    });
+
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: { name: 'Refundable Deposit' },
+        unit_amount: Math.round(dep * 100),
+      },
+      quantity: 1,
+    });
+
+    const res = await stripePost('/checkout/sessions', {
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: lineItems,
+      payment_intent_data: {
+        metadata: {
+          bookingId: String(bookingId || ''),
+          rentalAmount: String(rentalAmount || ''),
+          depositAmount: String(dep || ''),
+        },
+      },
+      success_url: 'https://irong-cc.westcal98.workers.dev/?payment=success&bookingId=' + bookingId,
+      cancel_url: 'https://irong-cc.westcal98.workers.dev/?payment=cancelled&bookingId=' + bookingId,
+      expires_at: Math.floor(Date.now() / 1000) + 86400,
     }, env.STRIPE_SECRET_KEY);
 
     const data = await res.json();
     if (!res.ok) {
-      console.error('[IronG] Stripe payment-link error:', data);
+      console.error('[IronG] Stripe checkout-session error:', data);
       return new Response(JSON.stringify({ error: data.error?.message || 'Stripe error' }), {
         status: 500,
         headers: { ...cors, 'Content-Type': 'application/json' },
       });
     }
 
-    return new Response(JSON.stringify({ url: data.url, id: data.id }), {
+    return new Response(JSON.stringify({ url: data.url, sessionId: data.id }), {
       status: 200,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
   } catch (err) {
-    console.error('[IronG] handleStripePaymentLink error:', err);
+    console.error('[IronG] handleStripeCheckoutSession error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
@@ -580,6 +636,209 @@ async function handlePushSubscribe(request, env) {
     return new Response(JSON.stringify({ success: false, error: err.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleStripeWebhook(request, env) {
+  const rawBody = await request.text();
+  const sigHeader = request.headers.get('Stripe-Signature') || '';
+
+  let timestamp = null;
+  let v1 = null;
+  for (const part of sigHeader.split(',')) {
+    if (part.startsWith('t=')) timestamp = part.slice(2);
+    else if (part.startsWith('v1=')) v1 = part.slice(3);
+  }
+
+  if (!timestamp || !v1) {
+    return new Response('Invalid signature', { status: 400 });
+  }
+
+  if (Math.abs(Date.now() / 1000 - parseInt(timestamp, 10)) > 300) {
+    return new Response('Timestamp too old', { status: 400 });
+  }
+
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(env.STRIPE_WEBHOOK_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(timestamp + '.' + rawBody));
+  const hex = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  if (hex !== v1) {
+    return new Response('Invalid signature', { status: 400 });
+  }
+
+  const event = JSON.parse(rawBody);
+  const obj = event.data.object;
+
+  if (event.type === 'checkout.session.completed') {
+    const paymentIntentId = obj.payment_intent;
+    const bookingId = obj.metadata?.bookingId || obj.payment_intent_data?.metadata?.bookingId;
+    if (bookingId) {
+      await env.IRONG_KV.put('booking:' + bookingId + ':paymentIntentId', paymentIntentId);
+    }
+    await env.IRONG_KV.put('booking:' + bookingId + ':sessionCompleted', JSON.stringify({
+      sessionId: obj.id,
+      paymentIntentId,
+      completedAt: Date.now(),
+    }));
+  } else if (event.type === 'checkout.session.expired') {
+    const bookingId = obj.metadata?.bookingId;
+    await env.IRONG_KV.put('webhook:alert:' + Date.now(), JSON.stringify({
+      type: 'session_expired',
+      bookingId,
+      message: 'Payment link expired — follow up with customer',
+      createdAt: Date.now(),
+      handled: false,
+      urgent: false,
+    }));
+  } else if (event.type === 'payment_intent.payment_failed') {
+    const bookingId = obj.metadata?.bookingId;
+    await env.IRONG_KV.put('webhook:alert:' + Date.now(), JSON.stringify({
+      type: 'payment_failed',
+      bookingId,
+      message: 'Payment failed — customer card declined',
+      createdAt: Date.now(),
+      handled: false,
+      urgent: false,
+    }));
+  } else if (event.type === 'payment_intent.succeeded') {
+    const bookingId = obj.metadata?.bookingId;
+    const paymentIntentId = obj.id;
+    const existing = await env.IRONG_KV.get('booking:' + bookingId + ':paymentIntentId');
+    if (!existing) {
+      await env.IRONG_KV.put('booking:' + bookingId + ':paymentIntentId', paymentIntentId);
+    }
+  } else if (event.type === 'refund.created') {
+    const bookingId = obj.metadata?.bookingId || 'unknown';
+    await env.IRONG_KV.put('booking:' + bookingId + ':refundCreated', JSON.stringify({
+      refundId: obj.id,
+      amount: obj.amount / 100,
+      createdAt: Date.now(),
+    }));
+  } else if (event.type === 'refund.updated') {
+    if (obj.status === 'failed') {
+      await env.IRONG_KV.put('webhook:alert:' + Date.now(), JSON.stringify({
+        type: 'refund_failed',
+        bookingId: obj.metadata?.bookingId || 'unknown',
+        message: 'Refund failed — process manually in Stripe dashboard',
+        createdAt: Date.now(),
+        handled: false,
+        urgent: false,
+      }));
+    }
+  } else if (event.type === 'refund.failed') {
+    await env.IRONG_KV.put('webhook:alert:' + Date.now(), JSON.stringify({
+      type: 'refund_failed',
+      bookingId: obj.metadata?.bookingId || 'unknown',
+      message: 'Refund failed — process manually in Stripe dashboard',
+      createdAt: Date.now(),
+      handled: false,
+      urgent: false,
+    }));
+  } else if (event.type === 'charge.dispute.created') {
+    const bookingId = obj.metadata?.bookingId || 'unknown';
+    await env.IRONG_KV.put('webhook:alert:' + Date.now(), JSON.stringify({
+      type: 'dispute',
+      bookingId,
+      amount: obj.amount / 100,
+      message: 'DISPUTE FILED — respond in Stripe dashboard immediately',
+      createdAt: Date.now(),
+      handled: false,
+      urgent: true,
+    }));
+  } else if (event.type === 'charge.dispute.closed') {
+    const bookingId = obj.metadata?.bookingId || 'unknown';
+    await env.IRONG_KV.put('booking:' + bookingId + ':disputeClosed', JSON.stringify({
+      outcome: obj.status,
+      closedAt: Date.now(),
+    }));
+  }
+
+  return new Response('ok', { status: 200 });
+}
+
+async function handleGetWebhookAlerts(request, env) {
+  try {
+    const url = new URL(request.url);
+    const handledFilter = url.searchParams.get('handled');
+
+    const list = await env.IRONG_KV.list({ prefix: 'webhook:alert:' });
+    const entries = await Promise.all(
+      list.keys.map(async (k) => {
+        const val = await env.IRONG_KV.get(k.name);
+        try {
+          const parsed = JSON.parse(val);
+          parsed._key = k.name;
+          return parsed;
+        } catch { return null; }
+      })
+    );
+
+    let results = entries.filter(Boolean);
+    if (handledFilter === 'false') {
+      results = results.filter(r => r.handled === false);
+    }
+    results.sort((a, b) => b.createdAt - a.createdAt);
+
+    return new Response(JSON.stringify(results), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get webhook alerts error:', err);
+    return new Response(JSON.stringify({ success: false, error: err.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleMarkWebhookAlertHandled(request, env) {
+  try {
+    const { key } = await request.json();
+    const val = await env.IRONG_KV.get(key);
+    if (!val) {
+      return new Response(JSON.stringify({ success: false, error: 'Not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const entry = JSON.parse(val);
+    entry.handled = true;
+    await env.IRONG_KV.put(key, JSON.stringify(entry));
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Mark webhook alert handled error:', err);
+    return new Response(JSON.stringify({ success: false, error: err.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetPaymentIntent(request, env, bookingId) {
+  const cors = getCors(request);
+  try {
+    const paymentIntentId = await env.IRONG_KV.get('booking:' + bookingId + ':paymentIntentId');
+    return new Response(JSON.stringify({ paymentIntentId: paymentIntentId || null }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get payment intent error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
     });
   }
 }
