@@ -7,6 +7,7 @@ var commPref = 'text';
 var _contactPref = 'sms';
 var _customAddOns = [];
 var _packageActionTaken = false;
+var _currentLockboxCode = null;
 var db = null;
 var currentPage = 'dashboard';
 var _currentDraftId = null;
@@ -209,6 +210,8 @@ function calcPrice() {
     if (tid !== _lastCalcTid) {
       depEl.value = r.dep;
       _lastCalcTid = tid;
+      _currentLockboxCode = null;
+      idbGet('trailer:' + tid + ':lockboxCode').then(function(code){ _currentLockboxCode = code||null; }).catch(function(){});
     } else {
       var customDep = parseInt(depEl.value, 10);
       if (!isNaN(customDep) && customDep >= 0) { r.dep = customDep; }
@@ -521,6 +524,7 @@ function sendPackage() {
     tax: p.tax||0, taxRate: p.taxRate||0.0885,
     addOns: p.addOns||[], addOnsTotal: p.addOnsTotal||0,
     grand: p.grand, load: r.ld, src: r.src, status: 'docs_pending',
+    lockboxCode: _currentLockboxCode||null,
     nt: r.nt, at: new Date().toISOString(), breakdown: p.breakdown||[], type: p.type,
     paymentLinkUrl: null, paymentLinkId: null,
     depositIntentId: null, depositSessionId: null, depositSessionUrl: null, depositStatus: null,
@@ -849,8 +853,9 @@ function _resetForm() {
   var commEls = document.querySelectorAll('#commToggle .comm-opt');
   commEls.forEach(function(b){b.classList.remove('active');});
   if (commEls[0]) commEls[0].classList.add('active');
-  // Reset package action flag
+  // Reset package action flag and lockbox cache
   _packageActionTaken = false;
+  _currentLockboxCode = null;
   // Reset add-ons
   _customAddOns = [];
   document.querySelectorAll('.addon-chk').forEach(function(c){c.checked = false;});
@@ -870,7 +875,11 @@ function _applyDraftToForm(draft) {
   set('f-tr', f.tr); set('f-sd', f.sd); set('f-st', f.st); set('f-ed', f.ed); set('f-et', f.et);
   // Set deposit before calcPrice so _lastCalcTid sync works correctly
   if (f.dep) { var depEl = g('f-dep'); if (depEl) depEl.value = f.dep; }
-  if (f.tr) _lastCalcTid = f.tr; // prevent calcPrice from resetting custom dep
+  if (f.tr) {
+    _lastCalcTid = f.tr; // prevent calcPrice from resetting custom dep
+    _currentLockboxCode = null;
+    idbGet('trailer:' + f.tr + ':lockboxCode').then(function(code){ _currentLockboxCode = code||null; }).catch(function(){});
+  }
   if (f.src) {
     var srcEl = g('f-src');
     if (srcEl) for (var i = 0; i < srcEl.options.length; i++) {
@@ -1157,9 +1166,12 @@ function drawFleet() {
         (t.status==='available'
           ? '<div class="fc-label">Current Combo Code</div><div class="fc-combo">' + t.combo + '</div><div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="startNewDraft()">+ Book This Trailer</button></div>'
           : '<div class="fc-renter">Rented to: <strong>' + t.renter + '</strong></div><div class="fc-renter">Due: <strong>' + t.returnDate + '</strong></div><div class="fc-label" style="margin-top:10px;">Active Combo</div><div class="fc-combo">' + t.combo + '</div><div style="margin-top:10px;"><button class="btn btn-success btn-sm" onclick="markRetByTrailer(\'' + t.id + '\')">✓ Mark Returned</button></div>'
-        ) + '</div>';
+        ) +
+        '<div id="lbx-' + t.id + '" style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;"><div class="fc-label" style="color:var(--muted);">Loading lockbox...</div></div>' +
+        '</div>';
     });
     fc.innerHTML = h;
+    state.fleet.forEach(function(t){ drawLockboxSection(t.id); });
   }
   var cm = g('comboManager');
   if (cm) {
@@ -1175,6 +1187,88 @@ function drawFleet() {
     });
     cm.innerHTML = ch;
   }
+}
+
+// ── LOCKBOX CODES ────────────────────────────────────
+async function drawLockboxSection(tid) {
+  var div = g('lbx-' + tid); if (!div) return;
+  var code = null, log = [];
+  try { code = await idbGet('trailer:' + tid + ':lockboxCode'); } catch(e) {}
+  try { var l = await idbGet('trailer:' + tid + ':lockboxLog'); if (Array.isArray(l)) log = l; } catch(e) {}
+  renderLockboxDisplay(tid, code, log, div);
+}
+
+function renderLockboxDisplay(tid, code, log, div) {
+  if (!div) return;
+  var lastChanged = (log && log.length)
+    ? 'Last changed: ' + new Date(log[0].changedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
+    : 'Never set';
+  var codeDisp = code
+    ? '<div class="fc-combo" style="margin:6px 0;">' + escHtml(String(code)) + '</div>'
+    : '<div style="color:var(--muted);font-size:13px;font-style:italic;margin:6px 0;">No code set</div>';
+  var histHtml = '';
+  if (log && log.length) {
+    var recent = log.slice(0, 5);
+    histHtml = '<div id="lbx-hist-' + tid + '" style="display:none;margin-top:8px;">' +
+      recent.map(function(e) {
+        var d = new Date(e.changedAt);
+        var ds = d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + ' at ' + d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+        return '<div style="font-size:11px;color:var(--muted);padding:3px 0;border-bottom:1px solid #1a1a1a;">' + escHtml(String(e.code)) + ' — changed ' + ds + '</div>';
+      }).join('') +
+    '</div>';
+  }
+  div.innerHTML =
+    '<div class="fc-label">Lockbox Code</div>' +
+    codeDisp +
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;">' + lastChanged + '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      '<button class="btn btn-ghost btn-sm" onclick="editLockbox(\'' + tid + '\')">✏️ Edit Code</button>' +
+      (log && log.length ? '<button class="btn btn-ghost btn-sm" id="lbx-hist-btn-' + tid + '" onclick="toggleLockboxHistory(\'' + tid + '\')">View History</button>' : '') +
+    '</div>' +
+    histHtml;
+}
+
+function editLockbox(tid) {
+  var div = g('lbx-' + tid); if (!div) return;
+  div.innerHTML =
+    '<div class="fc-label">Lockbox Code</div>' +
+    '<input class="fi" id="lbx-inp-' + tid + '" type="text" maxlength="10" placeholder="Enter code" style="margin-bottom:8px;">' +
+    '<div style="display:flex;gap:8px;">' +
+      '<button class="btn btn-primary btn-sm" onclick="saveLockboxCode(\'' + tid + '\')">Save</button>' +
+      '<button class="btn btn-ghost btn-sm" onclick="cancelLockboxEdit(\'' + tid + '\')">Cancel</button>' +
+    '</div>';
+  var inp = g('lbx-inp-' + tid); if (inp) inp.focus();
+}
+
+async function saveLockboxCode(tid) {
+  var inp = g('lbx-inp-' + tid); if (!inp) return;
+  var newCode = inp.value.trim();
+  if (!newCode) { alert('Enter a code.'); return; }
+  var log = [];
+  try { var l = await idbGet('trailer:' + tid + ':lockboxLog'); if (Array.isArray(l)) log = l; } catch(e) {}
+  log.unshift({code: newCode, changedAt: Date.now()});
+  if (log.length > 10) log = log.slice(0, 10);
+  await idbPut('trailer:' + tid + ':lockboxCode', newCode).catch(function(){});
+  await idbPut('trailer:' + tid + ':lockboxLog', log).catch(function(){});
+  var div = g('lbx-' + tid);
+  renderLockboxDisplay(tid, newCode, log, div);
+  showToast('Lockbox code updated');
+}
+
+async function cancelLockboxEdit(tid) {
+  var div = g('lbx-' + tid); if (!div) return;
+  var code = null, log = [];
+  try { code = await idbGet('trailer:' + tid + ':lockboxCode'); } catch(e) {}
+  try { var l = await idbGet('trailer:' + tid + ':lockboxLog'); if (Array.isArray(l)) log = l; } catch(e) {}
+  renderLockboxDisplay(tid, code, log, div);
+}
+
+function toggleLockboxHistory(tid) {
+  var el = g('lbx-hist-' + tid); if (!el) return;
+  var btn = g('lbx-hist-btn-' + tid);
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (btn) btn.textContent = open ? 'View History' : 'Hide History';
 }
 
 function drawActiveRentals() {
