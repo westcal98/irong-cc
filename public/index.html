@@ -80,7 +80,7 @@
       <div class="flow-arrow">›</div>
       <div class="flow-step" id="fs2" onclick="stepTabClick(2)"><div class="fs-num">2</div><div class="fs-label">Details</div></div>
       <div class="flow-arrow">›</div>
-      <div class="flow-step" id="fs3" onclick="stepTabClick(3)"><div class="fs-num">3</div><div class="fs-label">Review</div></div>
+      <div class="flow-step" id="fs3" onclick="stepTabClick(3)"><div class="fs-num">3</div><div class="fs-label">Send Pkg</div></div>
       <div class="flow-arrow">›</div>
       <div class="flow-step" id="fs4" onclick="stepTabClick(4)"><div class="fs-num">4</div><div class="fs-label">Send</div></div>
     </div>
@@ -149,24 +149,31 @@
       <div style="margin-top:4px;display:flex;justify-content:space-between;"><button class="btn btn-ghost" onclick="goStep(1)">← Back</button><button class="btn btn-primary" onclick="goStep(3)">Next: Review →</button></div>
     </div>
 
-    <!-- STEP 3 -->
+    <!-- STEP 3 — SEND PACKAGE -->
     <div id="step3" style="display:none;" class="fade-in">
-      <div class="cpanel" id="bookSummary"></div>
       <div class="card">
-        <div class="card-header"><div class="card-title">Pre-Booking Checklist</div></div>
-        <div class="card-body">
-          <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">Confirm these BEFORE booking. Payment is collected in Step 4 after the agreement is signed.</p>
-          <label style="display:flex;gap:10px;align-items:center;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="chk1" style="accent-color:var(--primary);width:18px;height:18px;flex-shrink:0;"><span style="font-size:14px;">Valid driver's license confirmed</span></label>
-          <label style="display:flex;gap:10px;align-items:center;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="chk2" style="accent-color:var(--primary);width:18px;height:18px;flex-shrink:0;"><span style="font-size:14px;">Proof of auto insurance covering towing confirmed</span></label>
-          <label style="display:flex;gap:10px;align-items:center;cursor:pointer;"><input type="checkbox" id="chk3" style="accent-color:var(--primary);width:18px;height:18px;flex-shrink:0;"><span style="font-size:14px;">Tow vehicle verified as capable for this trailer</span></label>
-          <div id="chk-warn" style="display:none;background:rgba(224,85,85,.1);border-left:3px solid var(--danger);color:#EF9A9A;padding:10px 14px;margin-top:12px;font-size:13px;border-radius:4px;"></div>
+        <div class="card-header"><div class="card-title">Booking Summary</div></div>
+        <div class="card-body" id="step3-summary">
+          <div style="color:var(--muted);font-size:13px;text-align:center;padding:16px;">Complete Steps 1 &amp; 2 first.</div>
         </div>
       </div>
-      <div class="card"><div class="card-header"><div class="card-title">Combo Code</div></div><div class="card-body" id="comboAssign"></div></div>
-      <div style="margin-top:4px;display:flex;justify-content:space-between;">
-        <button class="btn btn-ghost" onclick="goStep(2)">← Back</button>
-        <button class="btn btn-success" onclick="confirmBooking()">✓ Confirm Booking</button>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Package Preview</div>
+          <span id="step3-contact-badge" class="badge b-available" style="font-size:10px;">📱 Text</span>
+        </div>
+        <div class="card-body">
+          <div class="msg-text" id="step3-pkg-preview" style="min-height:100px;"></div>
+          <div id="pkg-missing-warn" class="alert ad" style="display:none;margin-top:10px;padding:8px 12px;font-size:12px;"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+            <button class="btn btn-primary btn-sm" onclick="pkg3Copy()">📋 Copy</button>
+            <button class="btn btn-ghost btn-sm" id="pkg3-sms-btn" onclick="pkg3OpenSms()">📱 Open SMS</button>
+            <button class="btn btn-ghost btn-sm" id="pkg3-email-btn" onclick="pkg3OpenEmail()" style="display:none;">📧 Open Email</button>
+          </div>
+        </div>
       </div>
+      <button class="btn btn-primary" id="send-pkg-btn" onclick="sendPackage()" style="width:100%;padding:14px;font-size:14px;letter-spacing:2px;margin-bottom:8px;" disabled>📤 Send Package</button>
+      <div><button class="btn btn-ghost" onclick="goStep(2)">← Back</button></div>
     </div>
 
     <!-- STEP 4 -->
@@ -199,6 +206,10 @@
             <input type="checkbox" id="quoteSent" style="accent-color:var(--success);width:18px;height:18px;flex-shrink:0;" onchange="onQuoteSent()">
             <span style="font-size:13px;font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Package sent — awaiting docs</span>
           </label>
+        </div>
+        <div class="fg" style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;">
+          <label class="fl">Tow Vehicle (confirm or update if changed)</label>
+          <input class="fi" id="gate0-vh" type="text" placeholder="Year Make Model" oninput="updateGate0Vh()">
         </div>
       </div>
 

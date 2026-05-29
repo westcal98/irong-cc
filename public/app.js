@@ -6,6 +6,7 @@ var LS_KEY = 'ironG_v3';
 var commPref = 'text';
 var _contactPref = 'sms';
 var _customAddOns = [];
+var _packageActionTaken = false;
 var db = null;
 var currentPage = 'dashboard';
 var _currentDraftId = null;
@@ -335,7 +336,7 @@ function goStep(n, fromHistory) {
       if (!g('f-tr').value || !g('f-sd').value || !g('f-ed').value || !_st || !_et) { alert('Please select trailer, dates, and times.'); return; }
       if (!(g('f-ld') && g('f-ld').value.trim())) { alert('Please enter what they are hauling.'); return; }
       state.booking.rental = {tid:g('f-tr').value, sd:g('f-sd').value, st:_st, ed:g('f-ed').value, et:_et, ld:g('f-ld').value, src:g('f-src').value, nt:g('f-nt').value};
-      calcPrice(); drawBookSummary(); drawComboAssign();
+      calcPrice(); drawStep3();
     }
   }
   for (var i = 1; i <= 4; i++) {
@@ -378,6 +379,178 @@ function drawBookSummary() {
     '<div class="crow"><span class="cl">Tax (8.85%)</span><span class="cv">' + fmtMoney(p.tax||0) + '</span></div>' +
     '<div class="crow"><span class="cl">Deposit</span><span class="cv">$' + p.dep + '</span></div>' +
     '<div class="crow" style="border-top:1px solid var(--orange-dark);margin-top:4px;padding-top:6px;"><span class="cl" style="color:var(--white);font-weight:700;">TOTAL DUE</span><span class="cv o" style="font-size:20px;">' + fmtMoney(p.grand) + '</span></div>';
+}
+
+// ── STEP 3 — SEND PACKAGE ────────────────────────────
+function buildPackageMsg() {
+  var c = state.booking.customer, r = state.booking.rental, p = state.booking.pricing;
+  if (!c || !r || !p) return '';
+  var t = findFleet(r.tid);
+  var trailerName = t ? t.name : '';
+  var daysDisp = p.durationLabel || (Math.ceil(p.days) + ' day' + (Math.ceil(p.days)!==1?'s':''));
+  var addOnsLines = '';
+  if (p.addOns && p.addOns.length) {
+    p.addOns.forEach(function(a){ addOnsLines += '- ' + a.label + ': ' + fmtMoney(a.amount) + '\n'; });
+  }
+  var contactTarget = c.contactPref === 'email' ? c.em : c.ph;
+  return 'Hi ' + c.fn + '! This is Frank with Iron G Equipment Co. Here\'s your booking summary:\n\n' +
+    '🚛 Trailer: ' + trailerName + '\n' +
+    '📅 Pickup: ' + r.sd + ' at ' + r.st + '\n' +
+    '📅 Return: ' + r.ed + ' at ' + r.et + ' (' + daysDisp + ')\n' +
+    '📍 Location: Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099\n\n' +
+    '💰 Quote:\n' +
+    '- Rental Fee: ' + fmtMoney(p.base) + '\n' +
+    addOnsLines +
+    '- Tax (8.85%): ' + fmtMoney(p.tax||0) + '\n' +
+    '- Deposit (refundable): ' + fmtMoney(p.dep) + '\n' +
+    '- Total Due: ' + fmtMoney(p.grand) + '\n\n' +
+    'Before we confirm your booking, please send the following to ' + contactTarget + ':\n' +
+    '☐ Driver\'s license photo\n' +
+    '☐ Vehicle insurance card\n' +
+    '☐ Confirm tow vehicle: ' + (c.vh||'—') + ' — reply if different\n\n' +
+    'Please also review the rental agreement at [agreement link].\n\n' +
+    'Reply to confirm or with any questions. We\'ll send your payment link once docs are verified.\n\n' +
+    '— Frank | Iron G Equipment Co. | (405) 393-4161';
+}
+
+function drawStep3() {
+  var c = state.booking.customer, r = state.booking.rental, p = state.booking.pricing;
+  var sumDiv = g('step3-summary');
+  if (sumDiv) {
+    if (!c || !r || !p) {
+      sumDiv.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px;">Complete Steps 1 &amp; 2 first.</div>';
+    } else {
+      var t = findFleet(r.tid);
+      var daysDisp = p.durationLabel || (Math.ceil(p.days) + ' day' + (p.days>1?'s':''));
+      var prefBadge = c.contactPref === 'email' ? 'via Email' : 'via Text';
+      var prefCls = c.contactPref === 'email' ? 'b-rented' : 'b-available';
+      var addOnsHtml = '';
+      if (p.addOns && p.addOns.length) {
+        p.addOns.forEach(function(a){ addOnsHtml += '<div class="crow"><span class="cl" style="padding-left:10px;">— ' + escHtml(a.label) + '</span><span class="cv">' + fmtMoney(a.amount) + '</span></div>'; });
+      }
+      sumDiv.innerHTML =
+        '<div class="crow"><span class="cl">Customer</span><span class="cv">' + escHtml(c.fn) + ' ' + escHtml(c.ln) + '</span></div>' +
+        '<div class="crow"><span class="cl">Phone</span><span class="cv o">' + escHtml(c.ph) + '</span></div>' +
+        '<div class="crow"><span class="cl">Email</span><span class="cv">' + escHtml(c.em) + '</span></div>' +
+        '<div class="crow"><span class="cl">Contact</span><span class="cv"><span class="badge ' + prefCls + '" style="font-size:10px;">' + prefBadge + '</span></span></div>' +
+        '<div class="crow"><span class="cl">Tow Vehicle</span><span class="cv">' + escHtml(c.vh||'—') + '</span></div>' +
+        '<div class="crow"><span class="cl">Hauling</span><span class="cv">' + escHtml(r.ld||'—') + '</span></div>' +
+        '<div class="crow"><span class="cl">Trailer</span><span class="cv">' + escHtml(t?t.name:'—') + '</span></div>' +
+        '<div class="crow"><span class="cl">Pickup</span><span class="cv">' + r.sd + ' at ' + r.st + '</span></div>' +
+        '<div class="crow"><span class="cl">Return</span><span class="cv">' + r.ed + ' at ' + r.et + '</span></div>' +
+        '<div class="crow"><span class="cl">Duration</span><span class="cv">' + daysDisp + '</span></div>' +
+        '<div style="height:1px;background:rgba(255,255,255,.06);margin:8px 0;"></div>' +
+        '<div class="crow"><span class="cl">Rental Fee</span><span class="cv o">$' + p.base + '</span></div>' +
+        addOnsHtml +
+        '<div class="crow"><span class="cl">Tax (8.85%)</span><span class="cv">' + fmtMoney(p.tax||0) + '</span></div>' +
+        '<div class="crow"><span class="cl">Deposit</span><span class="cv">$' + p.dep + '</span></div>' +
+        '<div class="crow" style="border-top:1px solid rgba(255,255,255,.08);margin-top:4px;padding-top:6px;"><span class="cl" style="color:var(--white);font-weight:700;">Total Due</span><span class="cv o">' + fmtMoney(p.grand) + '</span></div>' +
+        '<div style="height:1px;background:rgba(255,255,255,.06);margin:8px 0;"></div>' +
+        '<div class="crow"><span class="cl">Location</span><span class="cv" style="text-align:right;font-size:11px;line-height:1.4;">Mother Road RV Boat &amp; Trailer Storage<br>16245 W HWY 66, Yukon, OK 73099</span></div>';
+    }
+  }
+  var pkgDiv = g('step3-pkg-preview');
+  if (pkgDiv) pkgDiv.textContent = buildPackageMsg();
+  var contactPref = c ? (c.contactPref||'sms') : 'sms';
+  var badgeEl = g('step3-contact-badge');
+  var smsBtnEl = g('pkg3-sms-btn');
+  var emailBtnEl = g('pkg3-email-btn');
+  if (badgeEl) { badgeEl.textContent = contactPref==='email'?'📧 Email':'📱 Text'; badgeEl.className='badge '+(contactPref==='email'?'b-rented':'b-available'); }
+  if (smsBtnEl) smsBtnEl.style.display = contactPref==='sms'?'':'none';
+  if (emailBtnEl) emailBtnEl.style.display = contactPref==='email'?'':'none';
+  var missing = [];
+  if (!c||!c.fn) missing.push('first name');
+  if (!c||!c.ph) missing.push('phone');
+  if (!c||!c.em) missing.push('email');
+  if (!c||!c.vh) missing.push('tow vehicle');
+  if (!r||!r.tid) missing.push('trailer');
+  if (!r||!r.sd||!r.st||!r.ed||!r.et) missing.push('dates/times');
+  if (!r||!r.ld) missing.push('what hauling');
+  if (!p) missing.push('pricing');
+  var warnDiv = g('pkg-missing-warn');
+  var btn = g('send-pkg-btn');
+  if (missing.length) {
+    if (warnDiv) { warnDiv.style.display=''; warnDiv.textContent='Missing: '+missing.join(', '); }
+    if (btn) btn.disabled = true;
+  } else {
+    if (warnDiv) warnDiv.style.display='none';
+    if (btn) btn.disabled = !_packageActionTaken;
+  }
+}
+
+function pkg3Copy() {
+  var el = g('step3-pkg-preview'); if (!el) return;
+  var text = el.textContent;
+  function fb() { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta); }
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).catch(fb); } else { fb(); }
+  showToast('Message copied!');
+  _packageActionTaken = true; updateSendPkgBtn();
+}
+
+function pkg3OpenSms() {
+  var c = state.booking.customer; if (!c||!c.ph) return;
+  var el = g('step3-pkg-preview'); if (!el) return;
+  window.location.href = 'sms:' + c.ph.replace(/\D/g,'') + '?body=' + encodeURIComponent(el.textContent);
+  _packageActionTaken = true; updateSendPkgBtn();
+}
+
+function pkg3OpenEmail() {
+  var c = state.booking.customer; if (!c||!c.em) return;
+  var el = g('step3-pkg-preview'); if (!el) return;
+  window.location.href = 'mailto:' + encodeURIComponent(c.em) + '?subject=' + encodeURIComponent('Iron G — Booking Summary') + '&body=' + encodeURIComponent(el.textContent);
+  _packageActionTaken = true; updateSendPkgBtn();
+}
+
+function updateSendPkgBtn() {
+  var btn = g('send-pkg-btn'); if (!btn) return;
+  var warnDiv = g('pkg-missing-warn');
+  var hasMissing = warnDiv && warnDiv.style.display !== 'none' && warnDiv.textContent;
+  btn.disabled = !!hasMissing || !_packageActionTaken;
+}
+
+function sendPackage() {
+  var c = state.booking.customer, r = state.booking.rental, p = state.booking.pricing;
+  if (!c||!r||!p) { alert('Complete all steps first.'); return; }
+  if (!confirm('Confirm package sent to ' + c.fn + ' ' + c.ln + '?')) return;
+  var t = findFleet(r.tid);
+  var bk = {
+    id: state.nextId++, c: c, trailer: t.name, tid: r.tid, sd: r.sd, ed: r.ed,
+    startTime: r.st||'', endTime: r.et||'',
+    days: p.days, durationLabel: p.durationLabel||'',
+    rental: p.base, dep: p.dep, total: p.base + (p.addOnsTotal||0),
+    tax: p.tax||0, taxRate: p.taxRate||0.0885,
+    addOns: p.addOns||[], addOnsTotal: p.addOnsTotal||0,
+    grand: p.grand, load: r.ld, src: r.src, status: 'docs_pending',
+    nt: r.nt, at: new Date().toISOString(), breakdown: p.breakdown||[], type: p.type,
+    paymentLinkUrl: null, paymentLinkId: null,
+    depositIntentId: null, depositSessionId: null, depositSessionUrl: null, depositStatus: null,
+    rentalPaid: false, depositHeld: false, docsVerified: false,
+    packageSentAt: new Date().toISOString(), confirmedAt: null
+  };
+  state.rentals.push(bk);
+  state.booking.id = bk.id;
+  t.status = 'rented'; t.renter = c.fn + ' ' + c.ln; t.returnDate = r.ed;
+  save(); clearDraft(); buildMessages(bk, t); updateStats();
+  addAct('Package sent: ' + c.fn + ' ' + c.ln + ' — ' + t.name, 'orange');
+  if (window._pendingBookingNotifKey) {
+    var pnk = window._pendingBookingNotifKey; window._pendingBookingNotifKey = null;
+    markHandled(pnk.key, pnk.id);
+  }
+  setGate(0,'done','Package sent');
+  setGate(1,'active','Awaiting signature');
+  setGate(2,'locked','Locked — sign agreement first');
+  setGate(3,'locked','Locked — confirm payment first');
+  setGate(4,'locked','Send day before return');
+  var qs = g('quoteSent'); if (qs) qs.checked = true;
+  var ag = g('agrSigned'); if (ag) ag.checked = false;
+  showToast('Package sent — booking saved');
+  goStep(4, true);
+}
+
+function updateGate0Vh() {
+  var el = g('gate0-vh'); if (!el) return;
+  var bk = findBookingById(state.booking.id); if (!bk) return;
+  bk.c.vh = el.value; save();
 }
 
 function drawComboAssign() {
@@ -676,6 +849,8 @@ function _resetForm() {
   var commEls = document.querySelectorAll('#commToggle .comm-opt');
   commEls.forEach(function(b){b.classList.remove('active');});
   if (commEls[0]) commEls[0].classList.add('active');
+  // Reset package action flag
+  _packageActionTaken = false;
   // Reset add-ons
   _customAddOns = [];
   document.querySelectorAll('.addon-chk').forEach(function(c){c.checked = false;});
@@ -724,7 +899,7 @@ function _applyDraftToForm(draft) {
   }
   if (step >= 3) {
     state.booking.rental = {tid:f.tr, sd:f.sd, st:f.st||'', ed:f.ed, et:f.et||'', ld:f.ld, src:f.src, nt:f.nt};
-    if (f.tr && f.sd && f.ed) { calcPrice(); drawBookSummary(); drawComboAssign(); }
+    if (f.tr && f.sd && f.ed) { calcPrice(); drawStep3(); }
   }
 }
 
@@ -805,6 +980,7 @@ function buildMessages(bk, trailer) {
     'Once received I\'ll send your payment links and you\'re all set.\n\n' +
     'Questions? Call/text ' + ph + '\n— Iron G Equipment Co.';
   var mq = g('msg-quote'); if (mq) mq.textContent = packageMsg;
+  var g0vh = g('gate0-vh'); if (g0vh) g0vh.value = c.vh || '';
   var confText = '✅ ' + c.fn + ', payment confirmed! Here are your pickup details:\n\n🚛 ' + bk.trailer + '\n📍 ' + addr + '\n🔐 Combo lock code: ' + bk.combo + '\n   (Spin to your code, pull handle down to open)\n📅 Return by: ' + retDate + '\n\n' + tips + '\n\n📸 When returning: lock the coupler and text me a photo.\n\nQuestions? Call/text Frank: ' + phDot + '\n\nThanks for choosing Iron G! 🤙';
   var confEmail = 'Subject: Iron G Equipment Co. — Pickup Instructions #' + bk.id + '\n\nHi ' + c.fn + ',\n\nPayment received — you\'re all set! Here are your pickup details:\n\nTRAILER: ' + bk.trailer + '\nPICKUP: ' + addr + '\nCOMBO CODE: ' + bk.combo + '\n(Spin dials to ' + bk.combo + ', pull shackle down to open)\n\nRETURN DUE: ' + retDate + '\n\n' + tips + '\n\nRETURN INSTRUCTIONS:\n• Return to same storage space\n• Lock the coupler\n• Text a photo of locked coupler to ' + ph + '\n• Deposit released within 3 business days\n\nQuestions? ' + ph + ' | ' + em + '\n\nThank you!\nFrank Garza — Owner\n' + biz;
   var remText = 'Hey ' + c.fn + '! Quick reminder from Iron G — your trailer is due back TOMORROW.\n\n📍 Return to: ' + addr + '\n🔐 Lock the coupler and text me a return photo\n📅 Due: ' + retDate + '\n\nNeed more time? Text me ASAP.\n\n— Frank ' + phDot + ' · Iron G Equipment Co.';
