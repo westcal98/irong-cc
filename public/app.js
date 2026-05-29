@@ -154,7 +154,7 @@ function showPage(id, skipPush) {
   if (id === 'process-return') drawProcessReturn(_processReturnId);
   if (id === 'history') drawHistory();
   if (id === 'new-booking') drawAvail();
-  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGateCodeSettings(); loadGlobalVarSettings(); }
+  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGlobalVarSettings(); }
   if (id === 'messaging') drawMessaging();
   if (id === 'docs') drawDocs();
   if (id === 'messages') drawMessages();
@@ -1365,8 +1365,8 @@ function drawFleet() {
       h += '<div class="fleet-card ' + t.status + '">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;"><div class="fc-name">' + t.name + '</div><span class="badge b-' + t.status + '">' + (t.status==='available'?'✓ Available':'⚡ Rented') + '</span></div>' +
         (t.status==='available'
-          ? '<div class="fc-label">Current Combo Code</div><div class="fc-combo">' + t.combo + '</div><div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="startNewDraft()">+ Book This Trailer</button></div>'
-          : '<div class="fc-renter">Rented to: <strong>' + t.renter + '</strong></div><div class="fc-renter">Due: <strong>' + t.returnDate + '</strong></div><div class="fc-label" style="margin-top:10px;">Active Combo</div><div class="fc-combo">' + t.combo + '</div><div style="margin-top:10px;"><button class="btn btn-success btn-sm" onclick="markRetByTrailer(\'' + t.id + '\')">✓ Mark Returned</button></div>'
+          ? '<div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="startNewDraft()">+ Book This Trailer</button></div>'
+          : '<div class="fc-renter">Rented to: <strong>' + t.renter + '</strong></div><div class="fc-renter">Due: <strong>' + t.returnDate + '</strong></div><div style="margin-top:10px;"><button class="btn btn-success btn-sm" onclick="markRetByTrailer(\'' + t.id + '\')">✓ Mark Returned</button></div>'
         ) +
         '<div id="lbx-' + t.id + '" style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;"><div class="fc-label" style="color:var(--muted);">Loading lockbox...</div></div>' +
         '</div>';
