@@ -729,7 +729,7 @@ function drawGate1(bk) {
   if (bk.paymentLinkUrl) {
     var sendBtn1 = bk.c.contactPref==='email'
       ? '<button class="btn btn-ghost btn-sm" onclick="sendGate1Link()">📧 Send via Email</button>'
-      : '<button class="btn btn-ghost btn-sm" onclick="sendGate1Link()">📱 Send via SMS</button>';
+      : '<button class="btn btn-ghost btn-sm" onclick="sendGate1Link()">📱 Open SMS</button><button class="btn btn-ghost btn-sm" onclick="openCorporatePhone()">📞 Open Corporate Phone</button>';
     div.innerHTML =
       '<div class="stripe-section"><div class="stripe-section-label">💰 Total — ' + fmtMoney(total) + '</div>' +
         '<input class="stripe-link-input" type="text" readonly value="' + escHtml(bk.paymentLinkUrl) + '">' +
@@ -841,7 +841,7 @@ async function drawGate2(bk) {
   var lockCode = bk.lockboxCode || null;
   var sendBtn2 = bk.c.contactPref==='email'
     ? '<button class="btn btn-ghost btn-sm" onclick="sendAccessInfo()">📧 Send via Email</button>'
-    : '<button class="btn btn-ghost btn-sm" onclick="sendAccessInfo()">📱 Send via SMS</button>';
+    : '<button class="btn btn-ghost btn-sm" onclick="sendAccessInfo()">📱 Open SMS</button><button class="btn btn-ghost btn-sm" onclick="openCorporatePhone()">📞 Open Corporate Phone</button>';
   div.innerHTML =
     '<div class="cpanel" style="margin-bottom:14px;"><h4>Access Codes</h4>' +
       '<div class="crow"><span class="cl">Gate Code</span><span class="cv o" style="font-family:Oswald,sans-serif;letter-spacing:3px;">' + escHtml(gateCode||'Set gate code in Settings') + '</span></div>' +
@@ -1200,7 +1200,7 @@ function buildMessages(bk, trailer) {
   var cm = g('confirmMsgs');
   if (cm) {
     var html = '';
-    if (comm==='text'||comm==='both') html += '<div class="msg"><div class="msg-label">📱 Confirmation Text with Combo Code</div><div class="msg-text" id="msg-conf-txt">' + confText.replace(/</g,'&lt;') + '</div><div class="msg-actions"><button class="btn btn-primary btn-sm" onclick="copyEl(\'msg-conf-txt\')">📋 Copy Text</button><button class="btn btn-ghost btn-sm" onclick="openSMS(\'msg-conf-txt\')">📱 Open in Messages</button></div></div>';
+    if (comm==='text'||comm==='both') html += '<div class="msg"><div class="msg-label">📱 Confirmation Text with Combo Code</div><div class="msg-text" id="msg-conf-txt">' + confText.replace(/</g,'&lt;') + '</div><div class="msg-actions"><button class="btn btn-primary btn-sm" onclick="copyEl(\'msg-conf-txt\')">📋 Copy Text</button><button class="btn btn-ghost btn-sm" onclick="openSMS(\'msg-conf-txt\')">📱 Open in Messages</button><button class="btn btn-ghost btn-sm" onclick="openCorporatePhone()">📞 Open Corporate Phone</button></div></div>';
     if (comm==='email'||comm==='both') html += '<div class="msg"><div class="msg-label">📧 Confirmation Email with Combo Code</div><div class="msg-text" id="msg-conf-em">' + confEmail.replace(/</g,'&lt;') + '</div><div class="msg-actions"><button class="btn btn-primary btn-sm" onclick="copyEl(\'msg-conf-em\')">📋 Copy Email</button></div></div>';
     cm.innerHTML = html;
   }
@@ -2056,6 +2056,10 @@ function openSMS(id) {
   var el = g(id); if (!el) return;
   var ph = state.booking.customer ? state.booking.customer.ph.replace(/\D/g,'') : '';
   window.location.href = 'sms:' + ph + '?body=' + encodeURIComponent(el.textContent);
+}
+
+function openCorporatePhone() {
+  window.location.href = 'intent:#Intent;action=android.intent.action.MAIN;package=com.corporatetools.phoneservice;end';
 }
 
 // ── DASHBOARD ────────────────────────────────────────
