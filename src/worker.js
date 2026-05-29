@@ -96,6 +96,126 @@ Reply with any questions.
 — Frank | Iron G Equipment Co. | {businessPhone}`,
 };
 
+// ── DOCUMENT DEFAULTS ──────────────────────────────────
+const DOC_DEFAULTS = {
+  'rental-agreement': `IRON G EQUIPMENT CO. LLC
+TRAILER RENTAL AGREEMENT
+
+Date: {date}
+Booking ID: {bookingId}
+
+RENTER INFORMATION
+Name: {firstName} {lastName}
+Phone: {phone}
+Email: {email}
+City: {city}
+Tow Vehicle: {towVehicle}
+Driver License: ___________________
+
+RENTAL DETAILS
+Trailer: {trailerName}
+Pickup: {startDate} at {startTime}
+Return: {endDate} at {endTime}
+Total Days: {days}
+Pickup Location: {pickupAddress}
+
+CHARGES
+Rental Fee: \${rentalFee}
+{addOns}Tax (8.85%): \${tax}
+Refundable Deposit: \${deposit}
+Total Due: \${total}
+
+TERMS AND CONDITIONS
+1. RENTER must be 18 years or older with a valid driver's license.
+2. RENTER is responsible for the trailer from time of pickup until return is confirmed.
+3. RENTER assumes full liability for any damage, theft, or loss occurring during the rental period.
+4. Trailer must be returned to {pickupAddress} by {endDate} at {endTime}. Late returns will be charged at the daily rental rate.
+5. RENTER must have adequate tow vehicle and equipment. Iron G Equipment Co. LLC is not responsible for accidents or damage caused by improper towing.
+6. No off-road use. Trailer must remain on paved or improved surfaces.
+7. RENTER must not sublet or loan the trailer to any third party.
+8. Deposit of \${deposit} will be refunded upon confirmed clean return with required photos and video. Deposit may be fully or partially withheld for damage, excessive cleaning, or missing equipment.
+9. Early returns do not automatically qualify for partial refunds. Contact Iron G Equipment Co. to discuss.
+10. RENTER agrees to submit minimum 4 photos (front, rear, driver side, passenger side) plus 1 walk-around video upon return.
+
+ACKNOWLEDGEMENTS
+Renter confirms tow vehicle is capable of safely towing this trailer: ______
+Renter confirms they have reviewed and understand all terms: ______
+Renter confirms trailer was inspected at pickup and accepted in good condition: ______
+
+SIGNATURES
+Renter Signature: ___________________ Date: ________
+Printed Name: ___________________
+Iron G Equipment Co. Representative: ___________________ Date: ________`,
+
+  'damage-report': `IRON G EQUIPMENT CO. LLC
+DAMAGE / INCIDENT REPORT
+
+Date: {date}
+Booking ID: {bookingId}
+Rental Period: {startDate} — {endDate}
+
+RENTER INFORMATION
+Name: {firstName} {lastName}
+Phone: {phone}
+
+TRAILER INFORMATION
+Trailer: {trailerName}
+
+DAMAGE DESCRIPTION
+Date/Time Discovered: ___________________
+Location Discovered: ___________________
+Description of Damage:
+_______________________________________________
+_______________________________________________
+
+ESTIMATED REPAIR COST: $___________________
+DEPOSIT HELD: \${deposit}
+ADDITIONAL AMOUNT OWED: $___________________
+
+PHOTOS/VIDEO ON FILE: ☐ Yes  ☐ No
+NUMBER OF PHOTOS: _______
+
+NOTES:
+_______________________________________________
+
+Iron G Equipment Co. Representative: ___________________ Date: ________`,
+
+  'return-confirmation': `IRON G EQUIPMENT CO. LLC
+RETURN CONFIRMATION
+
+Date: {date}
+Booking ID: {bookingId}
+
+RENTER: {firstName} {lastName}
+TRAILER: {trailerName}
+RENTAL PERIOD: {startDate} at {startTime} — {endDate} at {endTime}
+
+RETURN DETAILS
+Actual Return Date: {actualReturnDate}
+Actual Return Time: {actualReturnTime}
+Condition: ☐ Clean  ☐ Damage noted
+
+FINANCIAL SUMMARY
+Total Charged: \${total}
+Deposit Held: \${deposit}
+Deposit Refunded: $___________________
+Additional Charges: $___________________
+Early Return Refund: $___________________
+
+RETURN DOCUMENTATION RECEIVED
+☐ Photo — Front
+☐ Photo — Rear
+☐ Photo — Driver Side
+☐ Photo — Passenger Side
+☐ Additional damage photos
+☐ Walk-around video
+
+NOTES:
+_______________________________________________
+
+Iron G Equipment Co. Representative: ___________________ Date: ________`,
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -188,6 +308,39 @@ export default {
 
     if (url.pathname === '/globalvars' && request.method === 'POST') {
       return handlePostGlobalVars(request, env);
+    }
+
+    if (url.pathname === '/docs' && request.method === 'GET') {
+      return handleGetDocs(request, env);
+    }
+
+    if (url.pathname.startsWith('/docs/reset/') && request.method === 'POST') {
+      const id = url.pathname.slice('/docs/reset/'.length);
+      return handleResetDoc(request, env, id);
+    }
+
+    if (url.pathname.startsWith('/docs/booking/')) {
+      const rest = url.pathname.slice('/docs/booking/'.length);
+      const parts = rest.split('/').filter(Boolean);
+      if (parts.length === 1 && request.method === 'GET') {
+        return handleGetDocsForBooking(request, env, parts[0]);
+      }
+      if (parts.length === 2 && request.method === 'GET') {
+        return handleGetBookingDoc(request, env, parts[0], parts[1]);
+      }
+      if (parts.length === 2 && request.method === 'POST') {
+        return handlePostBookingDoc(request, env, parts[0], parts[1]);
+      }
+    }
+
+    if (url.pathname.startsWith('/docs/') && request.method === 'GET') {
+      const id = url.pathname.slice('/docs/'.length);
+      return handleGetDoc(request, env, id);
+    }
+
+    if (url.pathname.startsWith('/docs/') && request.method === 'POST') {
+      const id = url.pathname.slice('/docs/'.length);
+      return handlePostDoc(request, env, id);
     }
 
     return env.ASSETS.fetch(request);
@@ -1110,6 +1263,176 @@ async function handlePostGlobalVars(request, env) {
     });
   } catch (err) {
     console.error('[IronG] Post globalvars error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── DOCUMENT HANDLERS ──────────────────────────────────
+
+async function handleGetDocs(request, env) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'doc:' });
+    const entries = await Promise.all(
+      list.keys
+        .filter(k => !k.name.startsWith('doc:booking:'))
+        .map(async (k) => {
+          const val = await env.IRONG_KV.get(k.name);
+          try { return JSON.parse(val); } catch { return null; }
+        })
+    );
+    return new Response(JSON.stringify(entries.filter(Boolean)), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get docs error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetDoc(request, env, id) {
+  const cors = getCors(request);
+  try {
+    const val = await env.IRONG_KV.get('doc:' + id);
+    if (!val) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(val, {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get doc error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePostDoc(request, env, id) {
+  const cors = getCors(request);
+  try {
+    const { label, body, category } = await request.json();
+    if (!body) {
+      return new Response(JSON.stringify({ error: 'body is required' }), {
+        status: 400,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    const updatedAt = Date.now();
+    const entry = { id, label: label || id, category: category || 'operational', body, updatedAt };
+    await env.IRONG_KV.put('doc:' + id, JSON.stringify(entry));
+    return new Response(JSON.stringify({ success: true, updatedAt }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post doc error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleResetDoc(request, env, id) {
+  const cors = getCors(request);
+  const defaultBody = DOC_DEFAULTS[id];
+  if (!defaultBody) {
+    return new Response(JSON.stringify({ error: 'Not found' }), {
+      status: 404,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+  try {
+    const updatedAt = Date.now();
+    const entry = { id, label: id, body: defaultBody, updatedAt };
+    await env.IRONG_KV.put('doc:' + id, JSON.stringify(entry));
+    return new Response(JSON.stringify({ success: true, body: defaultBody }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Reset doc error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetBookingDoc(request, env, bookingId, docId) {
+  const cors = getCors(request);
+  try {
+    const val = await env.IRONG_KV.get('doc:booking:' + bookingId + ':' + docId);
+    if (!val) {
+      return new Response(JSON.stringify({ body: null }), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(val, {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get booking doc error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePostBookingDoc(request, env, bookingId, docId) {
+  const cors = getCors(request);
+  try {
+    const { body } = await request.json();
+    const entry = { bookingId, docId, body, savedAt: Date.now() };
+    await env.IRONG_KV.put('doc:booking:' + bookingId + ':' + docId, JSON.stringify(entry));
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post booking doc error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetDocsForBooking(request, env, bookingId) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'doc:booking:' + bookingId + ':' });
+    const entries = await Promise.all(
+      list.keys.map(async (k) => {
+        const val = await env.IRONG_KV.get(k.name);
+        try {
+          const parsed = JSON.parse(val);
+          return { docId: parsed.docId, bookingId: parsed.bookingId, savedAt: parsed.savedAt };
+        } catch { return null; }
+      })
+    );
+    return new Response(JSON.stringify(entries.filter(Boolean)), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get docs for booking error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
