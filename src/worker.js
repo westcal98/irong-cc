@@ -13,6 +13,89 @@ function getCors(request) {
   };
 }
 
+// ── TEMPLATE DEFAULTS ──────────────────────────────────
+const DEFAULTS = {
+  'pre-booking-package': `Hi {firstName}! This is Frank with Iron G Equipment Co. Here's your booking summary:
+
+🚛 Trailer: {trailerName}
+📅 Pickup: {startDate} at {startTime}
+📅 Return: {endDate} at {endTime} ({days} days)
+📍 Location: {pickupAddress}
+
+💰 Quote:
+- Rental Fee: \${rentalFee}
+{addOns}- Tax (8.85%): \${tax}
+- Deposit (refundable): \${deposit}
+- Total Due: \${total}
+
+Before we confirm your booking, please send the following to {contactInfo}:
+☐ Driver's license photo
+☐ Vehicle insurance card
+☐ Confirm tow vehicle: {towVehicle} — reply if different
+
+Please also review the rental agreement. Reply to confirm or with any questions. We'll send your payment link once docs are verified.
+
+— Frank | Iron G Equipment Co. | {businessPhone}`,
+
+  'gate2-confirmation': `Hi {firstName}! Your Iron G rental is confirmed. Here's everything you need:
+
+🚛 Trailer: {trailerName}
+📅 Pickup: {startDate} at {startTime}
+📅 Return: {endDate} at {endTime}
+📍 {pickupAddress}
+🔐 Gate Code: {gateCode}
+🔑 Lockbox Code: {lockboxCode} (contains your coupler lock combo)
+
+IMPORTANT RETURN INSTRUCTIONS:
+- Return trailer by {endDate} at {endTime}
+- Late returns may result in additional charges
+- To complete your return, send to {contactInfo}:
+  - Minimum 4 photos: front, rear, driver side, passenger side
+  - Additional photos if any damage
+  - 1 walk-around video
+- Lock the coupler on return
+
+Questions? Call or text Frank at {businessPhone}
+
+— Iron G Equipment Co.`,
+
+  'return-reminder': `Hi {firstName}! Reminder from Iron G — your trailer is due back TOMORROW ({endDate}) by {endTime}.
+
+📍 Return to: {pickupAddress}
+🔐 Gate Code: {gateCode}
+
+To complete your return please send to {contactInfo}:
+- Minimum 4 photos: front, rear, driver side, passenger side
+- Additional photos if any damage occurred
+- 1 walk-around video
+
+⚠️ Returns after {endTime} on {endDate} may result in additional charges.
+
+Lock the coupler when done and text Frank at {businessPhone} when returned.
+
+— Iron G Equipment Co.`,
+
+  'late-return': `Hi {firstName}, this is Frank with Iron G Equipment Co. Your trailer was due back on {endDate} at {endTime} and we haven't received your return confirmation yet.
+
+Please return the trailer to {pickupAddress} as soon as possible.
+
+Additional charges may apply for the extra time. Please text Frank at {businessPhone} immediately to confirm your return plan.
+
+— Iron G Equipment Co.`,
+
+  'payment-link': `Hi {firstName}! Here is your Iron G payment link:
+
+{paymentUrl}
+
+Total: \${total} (includes \${deposit} refundable deposit)
+
+Please complete payment to confirm your booking. Link expires in 24 hours.
+
+Reply with any questions.
+
+— Frank | Iron G Equipment Co. | {businessPhone}`,
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -78,6 +161,33 @@ export default {
 
     if (url.pathname === '/stripe/refund' && request.method === 'POST') {
       return handleStripeRefund(request, env);
+    }
+
+    if (url.pathname === '/templates' && request.method === 'GET') {
+      return handleGetTemplates(request, env);
+    }
+
+    if (url.pathname.startsWith('/templates/reset/') && request.method === 'POST') {
+      const id = url.pathname.slice('/templates/reset/'.length);
+      return handleResetTemplate(request, env, id);
+    }
+
+    if (url.pathname.startsWith('/templates/') && request.method === 'GET') {
+      const id = url.pathname.slice('/templates/'.length);
+      return handleGetTemplate(request, env, id);
+    }
+
+    if (url.pathname.startsWith('/templates/') && request.method === 'POST') {
+      const id = url.pathname.slice('/templates/'.length);
+      return handlePostTemplate(request, env, id);
+    }
+
+    if (url.pathname === '/globalvars' && request.method === 'GET') {
+      return handleGetGlobalVars(request, env);
+    }
+
+    if (url.pathname === '/globalvars' && request.method === 'POST') {
+      return handlePostGlobalVars(request, env);
     }
 
     return env.ASSETS.fetch(request);
@@ -836,6 +946,170 @@ async function handleGetPaymentIntent(request, env, bookingId) {
     });
   } catch (err) {
     console.error('[IronG] Get payment intent error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── TEMPLATE HANDLERS ──────────────────────────────────
+
+async function handleGetTemplates(request, env) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'template:' });
+    const entries = await Promise.all(
+      list.keys.map(async (k) => {
+        const val = await env.IRONG_KV.get(k.name);
+        try {
+          const parsed = JSON.parse(val);
+          parsed.key = k.name;
+          return parsed;
+        } catch { return null; }
+      })
+    );
+    return new Response(JSON.stringify(entries.filter(Boolean)), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get templates error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetTemplate(request, env, id) {
+  const cors = getCors(request);
+  try {
+    const val = await env.IRONG_KV.get('template:' + id);
+    if (!val) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(val, {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get template error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePostTemplate(request, env, id) {
+  const cors = getCors(request);
+  try {
+    const { label, body } = await request.json();
+    if (!body) {
+      return new Response(JSON.stringify({ error: 'body is required' }), {
+        status: 400,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    const updatedAt = Date.now();
+    const entry = { id, label: label || id, body, updatedAt };
+    await env.IRONG_KV.put('template:' + id, JSON.stringify(entry));
+    return new Response(JSON.stringify({ success: true, updatedAt }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post template error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleResetTemplate(request, env, id) {
+  const cors = getCors(request);
+  const defaultBody = DEFAULTS[id];
+  if (!defaultBody) {
+    return new Response(JSON.stringify({ error: 'Not found' }), {
+      status: 404,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+  try {
+    const updatedAt = Date.now();
+    const entry = { id, label: id, body: defaultBody, updatedAt };
+    await env.IRONG_KV.put('template:' + id, JSON.stringify(entry));
+    return new Response(JSON.stringify({ success: true, body: defaultBody }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Reset template error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── GLOBALVARS HANDLERS ────────────────────────────────
+
+async function handleGetGlobalVars(request, env) {
+  const cors = getCors(request);
+  const defaults = {
+    businessPhone: '(405) 393-4161',
+    pickupAddress: 'Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099',
+    gateCode: '',
+    businessName: 'Iron G Equipment Co.',
+  };
+  try {
+    const val = await env.IRONG_KV.get('globalvars');
+    if (!val) {
+      return new Response(JSON.stringify(defaults), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    try {
+      const parsed = JSON.parse(val);
+      return new Response(JSON.stringify({ ...defaults, ...parsed }), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    } catch {
+      return new Response(JSON.stringify(defaults), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+  } catch (err) {
+    console.error('[IronG] Get globalvars error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePostGlobalVars(request, env) {
+  const cors = getCors(request);
+  try {
+    const incoming = await request.json();
+    const existing = await env.IRONG_KV.get('globalvars');
+    const current = existing ? JSON.parse(existing) : {};
+    const merged = { ...current, ...incoming };
+    await env.IRONG_KV.put('globalvars', JSON.stringify(merged));
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post globalvars error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
