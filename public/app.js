@@ -15,6 +15,8 @@ var _currentDraftId = null;
 var _currentDraftCreatedAt = null;
 var _highestStepReached = 1;
 var _lastCalcTid = '';
+var globalVars = {};
+var _templateCache = {};
 
 function defaultState() {
   return {
@@ -122,7 +124,8 @@ var titles = {
   dashboard:'Dashboard', fleet:'Fleet Status', 'new-booking':'New Booking',
   'active-rentals':'Active Rentals', messages:'Message Templates', agreement:'Rental Agreement',
   pricing:'Pricing Reference', history:'Rental History', settings:'Settings',
-  notifications:'Notifications', drafts:'Drafts', 'process-return':'Process Return'
+  notifications:'Notifications', drafts:'Drafts', 'process-return':'Process Return',
+  messaging:'Messaging'
 };
 
 function showPage(id, skipPush) {
@@ -139,7 +142,7 @@ function showPage(id, skipPush) {
   var drawerMap = {
     'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals',
     'new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications',
-    'drafts':'dnav-drafts'
+    'drafts':'dnav-drafts','messaging':'dnav-messaging'
   };
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
@@ -151,7 +154,8 @@ function showPage(id, skipPush) {
   if (id === 'process-return') drawProcessReturn(_processReturnId);
   if (id === 'history') drawHistory();
   if (id === 'new-booking') drawAvail();
-  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGateCodeSettings(); }
+  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGateCodeSettings(); loadGlobalVarSettings(); }
+  if (id === 'messaging') drawMessaging();
   if (id === 'messages') drawMessages();
   if (id === 'agreement') drawFullAgr();
   if (id === 'notifications') drawNotifications();
@@ -387,35 +391,36 @@ function drawBookSummary() {
 }
 
 // ── STEP 3 — SEND PACKAGE ────────────────────────────
-function buildPackageMsg() {
+async function buildPackageMsg() {
   var c = state.booking.customer, r = state.booking.rental, p = state.booking.pricing;
   if (!c || !r || !p) return '';
   var t = findFleet(r.tid);
-  var trailerName = t ? t.name : '';
+  var body = await getTemplateBody('pre-booking-package');
   var daysDisp = p.durationLabel || (Math.ceil(p.days) + ' day' + (Math.ceil(p.days)!==1?'s':''));
-  var addOnsLines = '';
-  if (p.addOns && p.addOns.length) {
-    p.addOns.forEach(function(a){ addOnsLines += '- ' + a.label + ': ' + fmtMoney(a.amount) + '\n'; });
-  }
   var contactTarget = c.contactPref === 'email' ? c.em : c.ph;
-  return 'Hi ' + c.fn + '! This is Frank with Iron G Equipment Co. Here\'s your booking summary:\n\n' +
-    '🚛 Trailer: ' + trailerName + '\n' +
-    '📅 Pickup: ' + r.sd + ' at ' + r.st + '\n' +
-    '📅 Return: ' + r.ed + ' at ' + r.et + ' (' + daysDisp + ')\n' +
-    '📍 Location: Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099\n\n' +
-    '💰 Quote:\n' +
-    '- Rental Fee: ' + fmtMoney(p.base) + '\n' +
-    addOnsLines +
-    '- Tax (8.85%): ' + fmtMoney(p.tax||0) + '\n' +
-    '- Deposit (refundable): ' + fmtMoney(p.dep) + '\n' +
-    '- Total Due: ' + fmtMoney(p.grand) + '\n\n' +
-    'Before we confirm your booking, please send the following to ' + contactTarget + ':\n' +
-    '☐ Driver\'s license photo\n' +
-    '☐ Vehicle insurance card\n' +
-    '☐ Confirm tow vehicle: ' + (c.vh||'—') + ' — reply if different\n\n' +
-    'Please also review the rental agreement at [agreement link].\n\n' +
-    'Reply to confirm or with any questions. We\'ll send your payment link once docs are verified.\n\n' +
-    '— Frank | Iron G Equipment Co. | (405) 393-4161';
+  var addOnsArr = p.addOns || [];
+  return addTokens(body, {
+    firstName: c.fn,
+    trailerName: t ? t.name : '',
+    startDate: r.sd,
+    startTime: r.st,
+    endDate: r.ed,
+    endTime: r.et,
+    days: daysDisp,
+    pickupAddress: globalVars.pickupAddress || 'Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099',
+    rentalFee: p.base,
+    addOns: addOnsArr,
+    tax: (p.tax||0).toFixed(2),
+    deposit: p.dep,
+    total: p.grand ? p.grand.toFixed(2) : (p.base + (p.addOnsTotal||0) + (p.tax||0) + p.dep).toFixed(2),
+    towVehicle: c.vh || '—',
+    contactInfo: contactTarget,
+    gateCode: globalVars.gateCode || '',
+    lockboxCode: '',
+    paymentUrl: '',
+    businessPhone: globalVars.businessPhone || '(405) 393-4161',
+    businessName: globalVars.businessName || 'Iron G Equipment Co.'
+  });
 }
 
 function drawStep3() {
@@ -455,7 +460,7 @@ function drawStep3() {
     }
   }
   var pkgDiv = g('step3-pkg-preview');
-  if (pkgDiv) pkgDiv.textContent = buildPackageMsg();
+  buildPackageMsg().then(function(msg){ if (pkgDiv) pkgDiv.textContent = msg; });
   var contactPref = c ? (c.contactPref||'sms') : 'sms';
   var badgeEl = g('step3-contact-badge');
   var smsBtnEl = g('pkg3-sms-btn');
@@ -761,9 +766,17 @@ function copyGate1Link() {
   showToast('Payment link copied!');
 }
 
-function sendGate1Link() {
+async function sendGate1Link() {
   var bk = findBookingById(state.booking.id); if (!bk||!bk.paymentLinkUrl) return;
-  var msg = 'Hi ' + bk.c.fn + ', here is your Iron G payment link: ' + bk.paymentLinkUrl + ' — Total: ' + fmtMoney(bk.grand) + ' (includes ' + fmtMoney(bk.dep) + ' refundable deposit). Reply with any questions. — Frank | Iron G Equipment Co.';
+  var body = await getTemplateBody('payment-link');
+  var msg = addTokens(body, {
+    firstName: bk.c.fn,
+    paymentUrl: bk.paymentLinkUrl,
+    total: bk.grand ? ('' + bk.grand) : '',
+    deposit: '' + bk.dep,
+    businessPhone: globalVars.businessPhone || '(405) 393-4161',
+    businessName: globalVars.businessName || 'Iron G Equipment Co.'
+  });
   if (bk.c.contactPref==='email') {
     window.location.href = 'mailto:' + encodeURIComponent(bk.c.em) + '?subject=' + encodeURIComponent('Iron G Payment Link') + '&body=' + encodeURIComponent(msg);
   } else {
@@ -839,30 +852,27 @@ async function drawGate2(bk) {
     '</div>' +
     '<button class="btn btn-success" onclick="markConfirmedActive()" style="width:100%;">✓ Mark Confirmed &amp; Active</button>';
   var msgEl = g('gate2-msg');
-  if (msgEl) msgEl.textContent = buildAccessInfoMsg(bk, gateCode, lockCode);
+  if (msgEl) buildAccessInfoMsg(bk, gateCode, lockCode).then(function(msg){ msgEl.textContent = msg; });
 }
 
-function buildAccessInfoMsg(bk, gateCode, lockCode) {
+async function buildAccessInfoMsg(bk, gateCode, lockCode) {
   var c = bk.c;
-  var contactTarget = c.contactPref==='email' ? c.em : c.ph;
-  return 'Hi ' + c.fn + '! Your Iron G rental is confirmed. Here\'s everything you need:\n\n' +
-    '🚛 Trailer: ' + bk.trailer + '\n' +
-    '📅 Pickup: ' + bk.sd + (bk.startTime?' at '+bk.startTime:'') + '\n' +
-    '📅 Return: ' + bk.ed + (bk.endTime?' at '+bk.endTime:'') + '\n' +
-    '📍 Mother Road RV Boat & Trailer Storage\n' +
-    '   16245 W HWY 66, Yukon, OK 73099\n' +
-    '🔐 Gate Code: ' + (gateCode||'Set gate code in Settings') + '\n' +
-    '🔑 Lockbox Code: ' + (lockCode||'No lockbox code on file') + ' (contains your coupler lock combo)\n\n' +
-    'IMPORTANT RETURN INSTRUCTIONS:\n' +
-    '- Return trailer by ' + bk.ed + (bk.endTime?' at '+bk.endTime:'') + '\n' +
-    '- Late returns may result in additional charges\n' +
-    '- To complete your return, send to ' + contactTarget + ':\n' +
-    '  - Minimum 4 photos: front, rear, driver side, passenger side\n' +
-    '  - Additional photos if any damage\n' +
-    '  - 1 walk-around video\n' +
-    '- Lock the coupler on return\n\n' +
-    'Questions? Call or text Frank at (405) 393-4161\n\n' +
-    '— Iron G Equipment Co.';
+  var body = await getTemplateBody('gate2-confirmation');
+  var contactTarget = c.contactPref === 'email' ? c.em : c.ph;
+  return addTokens(body, {
+    firstName: c.fn,
+    trailerName: bk.trailer,
+    startDate: bk.sd,
+    startTime: bk.startTime || '',
+    endDate: bk.ed,
+    endTime: bk.endTime || '',
+    pickupAddress: globalVars.pickupAddress || 'Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099',
+    gateCode: gateCode || globalVars.gateCode || 'Set gate code in Settings',
+    lockboxCode: lockCode || 'No lockbox code on file',
+    contactInfo: contactTarget,
+    businessPhone: globalVars.businessPhone || '(405) 393-4161',
+    businessName: globalVars.businessName || 'Iron G Equipment Co.'
+  });
 }
 
 function copyGate2Msg() {
@@ -1533,24 +1543,26 @@ function toggleReminderPanel(id) {
   var bk = findBookingById(id); if (!bk) return;
   if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
   var msgEl = g('reminder-msg-' + id);
-  if (msgEl) msgEl.textContent = buildReminderMsg(bk);
   panel.style.display = '';
+  buildReminderMsg(bk).then(function(msg){ if (msgEl) msgEl.textContent = msg; });
 }
 
-function buildReminderMsg(bk) {
+async function buildReminderMsg(bk) {
   var c = bk.c;
-  var contactTarget = c.contactPref==='email' ? c.em : c.ph;
+  var body = await getTemplateBody('return-reminder');
+  var contactTarget = c.contactPref === 'email' ? c.em : c.ph;
   var endDateFmt = new Date(bk.ed+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   var endTimeFmt = bk.endTime ? new Date('2000-01-01T'+bk.endTime).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '';
-  return 'Hi ' + c.fn + '! Reminder from Iron G — your trailer is due back TOMORROW (' + endDateFmt + ')' + (endTimeFmt?' by '+endTimeFmt:'') + '.\n\n' +
-    '📍 Return to: Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099\n\n' +
-    'To complete your return please send to ' + contactTarget + ':\n' +
-    '- Minimum 4 photos: front, rear, driver side, passenger side\n' +
-    '- Additional photos if any damage occurred\n' +
-    '- 1 walk-around video\n\n' +
-    (endTimeFmt ? '⚠️ Returns after ' + endTimeFmt + ' on ' + endDateFmt + ' may result in additional charges.\n\n' : '') +
-    'Lock the coupler when done and text Frank at (405) 393-4161 when returned.\n\n' +
-    '— Iron G Equipment Co.';
+  return addTokens(body, {
+    firstName: c.fn,
+    endDate: endDateFmt,
+    endTime: endTimeFmt,
+    pickupAddress: globalVars.pickupAddress || 'Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099',
+    gateCode: globalVars.gateCode || '',
+    contactInfo: contactTarget,
+    businessPhone: globalVars.businessPhone || '(405) 393-4161',
+    businessName: globalVars.businessName || 'Iron G Equipment Co.'
+  });
 }
 
 function copyReminderMsg(id) {
@@ -2076,6 +2088,179 @@ function drawDashboard() {
   }
 }
 
+// ── TOKEN ENGINE ─────────────────────────────────────
+
+var LOCAL_TEMPLATE_DEFAULTS = {};
+LOCAL_TEMPLATE_DEFAULTS['pre-booking-package'] = "Hi {firstName}! This is Frank with Iron G Equipment Co. Here's your booking summary:\n\n🚛 Trailer: {trailerName}\n📅 Pickup: {startDate} at {startTime}\n📅 Return: {endDate} at {endTime} ({days} days)\n📍 Location: {pickupAddress}\n\n💰 Quote:\n- Rental Fee: ${rentalFee}\n{addOns}- Tax (8.85%): ${tax}\n- Deposit (refundable): ${deposit}\n- Total Due: ${total}\n\nBefore we confirm your booking, please send the following to {contactInfo}:\n☐ Driver's license photo\n☐ Vehicle insurance card\n☐ Confirm tow vehicle: {towVehicle} — reply if different\n\nPlease also review the rental agreement. Reply to confirm or with any questions. We'll send your payment link once docs are verified.\n\n— Frank | Iron G Equipment Co. | {businessPhone}";
+LOCAL_TEMPLATE_DEFAULTS['gate2-confirmation'] = "Hi {firstName}! Your Iron G rental is confirmed. Here's everything you need:\n\n🚛 Trailer: {trailerName}\n📅 Pickup: {startDate} at {startTime}\n📅 Return: {endDate} at {endTime}\n📍 {pickupAddress}\n🔐 Gate Code: {gateCode}\n🔑 Lockbox Code: {lockboxCode} (contains your coupler lock combo)\n\nIMPORTANT RETURN INSTRUCTIONS:\n- Return trailer by {endDate} at {endTime}\n- Late returns may result in additional charges\n- To complete your return, send to {contactInfo}:\n  - Minimum 4 photos: front, rear, driver side, passenger side\n  - Additional photos if any damage\n  - 1 walk-around video\n- Lock the coupler on return\n\nQuestions? Call or text Frank at {businessPhone}\n\n— Iron G Equipment Co.";
+LOCAL_TEMPLATE_DEFAULTS['return-reminder'] = "Hi {firstName}! Reminder from Iron G — your trailer is due back TOMORROW ({endDate}) by {endTime}.\n\n📍 Return to: {pickupAddress}\n🔐 Gate Code: {gateCode}\n\nTo complete your return please send to {contactInfo}:\n- Minimum 4 photos: front, rear, driver side, passenger side\n- Additional photos if any damage occurred\n- 1 walk-around video\n\n⚠️ Returns after {endTime} on {endDate} may result in additional charges.\n\nLock the coupler when done and text Frank at {businessPhone} when returned.\n\n— Iron G Equipment Co.";
+LOCAL_TEMPLATE_DEFAULTS['late-return'] = "Hi {firstName}, this is Frank with Iron G Equipment Co. Your trailer was due back on {endDate} at {endTime} and we haven't received your return confirmation yet.\n\nPlease return the trailer to {pickupAddress} as soon as possible.\n\nAdditional charges may apply for the extra time. Please text Frank at {businessPhone} immediately to confirm your return plan.\n\n— Iron G Equipment Co.";
+LOCAL_TEMPLATE_DEFAULTS['payment-link'] = "Hi {firstName}! Here is your Iron G payment link:\n\n{paymentUrl}\n\nTotal: ${total} (includes ${deposit} refundable deposit)\n\nPlease complete payment to confirm your booking. Link expires in 24 hours.\n\nReply with any questions.\n\n— Frank | Iron G Equipment Co. | {businessPhone}";
+
+function addTokens(body, data) {
+  if (!body) return '';
+  var result = body;
+  var addOnsStr = '';
+  if (data.addOns && Array.isArray(data.addOns) && data.addOns.length) {
+    data.addOns.forEach(function(a) { addOnsStr += '- ' + (a.label || a.name || '') + ': $' + (a.amount || 0) + '\n'; });
+  }
+  var map = {
+    firstName: data.firstName, trailerName: data.trailerName,
+    startDate: data.startDate, startTime: data.startTime,
+    endDate: data.endDate, endTime: data.endTime, days: data.days,
+    pickupAddress: data.pickupAddress, rentalFee: data.rentalFee,
+    addOns: addOnsStr, tax: data.tax, deposit: data.deposit, total: data.total,
+    towVehicle: data.towVehicle, contactInfo: data.contactInfo,
+    gateCode: data.gateCode, lockboxCode: data.lockboxCode,
+    paymentUrl: data.paymentUrl, businessPhone: data.businessPhone,
+    businessName: data.businessName
+  };
+  for (var token in map) {
+    if (map[token] !== undefined && map[token] !== null) {
+      result = result.split('{' + token + '}').join(String(map[token]));
+    }
+  }
+  return result;
+}
+
+async function getTemplateBody(id) {
+  if (_templateCache[id]) return _templateCache[id];
+  try {
+    var res = await fetch('/templates/' + id);
+    if (res.ok) {
+      var data = await res.json();
+      if (data && data.body) { _templateCache[id] = data.body; return data.body; }
+    }
+  } catch(e) {}
+  return LOCAL_TEMPLATE_DEFAULTS[id] || '';
+}
+
+// ── MESSAGING PAGE ────────────────────────────────────
+
+var TEMPLATE_DEFS = [
+  { id: 'pre-booking-package', label: 'Pre-Booking Package' },
+  { id: 'payment-link', label: 'Payment Link Message' },
+  { id: 'gate2-confirmation', label: 'Confirmation & Access Info' },
+  { id: 'return-reminder', label: 'Return Reminder' },
+  { id: 'late-return', label: 'Late Return Notice' }
+];
+
+async function drawMessaging() {
+  var container = g('messagingBody'); if (!container) return;
+  container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:20px;font-size:13px;">Loading templates...</div>';
+  var savedTemplates = {};
+  try {
+    var res = await fetch('/templates');
+    if (res.ok) {
+      var arr = await res.json();
+      arr.forEach(function(t){ savedTemplates[t.id] = t; });
+    }
+  } catch(e) {}
+  var h = '';
+  TEMPLATE_DEFS.forEach(function(def) {
+    var saved = savedTemplates[def.id];
+    var body = saved ? saved.body : (LOCAL_TEMPLATE_DEFAULTS[def.id] || '');
+    var updatedAt = saved ? saved.updatedAt : null;
+    var updatedLabel = updatedAt ? 'Saved ' + relativeTime(new Date(updatedAt).toISOString()) : 'Default';
+    var bodyEsc = escHtml(body);
+    h += '<div class="card" id="tpl-card-' + def.id + '">' +
+      '<div class="card-header">' +
+        '<div class="card-title">' + def.label + '</div>' +
+        '<span id="tpl-updated-' + def.id + '" style="font-size:11px;color:var(--muted);">' + updatedLabel + '</span>' +
+      '</div>' +
+      '<div class="card-body">' +
+        '<textarea class="fi form-textarea" id="tpl-body-' + def.id + '" oninput="updateTplCharCount(\'' + def.id + '\')" style="min-height:200px;font-size:12px;line-height:1.6;font-family:Barlow,sans-serif;">' + bodyEsc + '</textarea>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;margin-bottom:10px;">' +
+          '<span id="tpl-chars-' + def.id + '" style="font-size:11px;color:var(--muted);">' + body.length + ' chars</span>' +
+          '<span id="tpl-save-status-' + def.id + '" style="font-size:11px;"></span>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;">' +
+          '<button class="btn btn-primary btn-sm" onclick="saveTemplate(\'' + def.id + '\')">Save</button>' +
+          '<button class="btn btn-ghost btn-sm" onclick="resetTemplate(\'' + def.id + '\')">Reset to Default</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  });
+  container.innerHTML = h;
+}
+
+function updateTplCharCount(id) {
+  var ta = g('tpl-body-' + id); var ct = g('tpl-chars-' + id);
+  if (ta && ct) ct.textContent = ta.value.length + ' chars';
+}
+
+async function saveTemplate(id) {
+  var ta = g('tpl-body-' + id); var statusEl = g('tpl-save-status-' + id);
+  if (!ta) return;
+  var body = ta.value;
+  if (statusEl) { statusEl.textContent = 'Saving...'; statusEl.style.color = 'var(--muted)'; }
+  try {
+    var label = (TEMPLATE_DEFS.find(function(d){ return d.id === id; }) || {}).label || id;
+    var res = await fetch('/templates/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: label, body: body }) });
+    var data = await res.json();
+    if (res.ok && data.success) {
+      _templateCache[id] = body;
+      if (statusEl) { statusEl.textContent = '✓ Saved'; statusEl.style.color = 'var(--success)'; setTimeout(function(){ if (statusEl) statusEl.textContent = ''; }, 3000); }
+      var updEl = g('tpl-updated-' + id); if (updEl) updEl.textContent = 'Just saved';
+    } else {
+      if (statusEl) { statusEl.textContent = 'Save failed'; statusEl.style.color = 'var(--danger)'; }
+    }
+  } catch(e) { if (statusEl) { statusEl.textContent = 'Save failed'; statusEl.style.color = 'var(--danger)'; } }
+}
+
+async function resetTemplate(id) {
+  if (!confirm('Reset this template to default? Your changes will be lost.')) return;
+  try {
+    var res = await fetch('/templates/reset/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    var data = await res.json();
+    if (res.ok && data.success) {
+      _templateCache[id] = data.body;
+      var ta = g('tpl-body-' + id); if (ta) { ta.value = data.body; updateTplCharCount(id); }
+      var updEl = g('tpl-updated-' + id); if (updEl) updEl.textContent = 'Default';
+      showToast('Reset to default');
+    }
+  } catch(e) { alert('Reset failed: ' + e.message); }
+}
+
+function toggleTokenRef() {
+  var body = g('tokenRefBody'); var btn = g('tokenRefToggle'); if (!body) return;
+  var open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (btn) btn.textContent = open ? 'Show' : 'Hide';
+}
+
+// ── GLOBAL VARS SETTINGS ──────────────────────────────
+
+async function loadGlobalVarSettings() {
+  try {
+    var res = await fetch('/globalvars'); if (!res.ok) return;
+    var data = await res.json();
+    globalVars = data;
+    var el;
+    el = g('gv-biz-name'); if (el) el.value = data.businessName || '';
+    el = g('gv-biz-phone'); if (el) el.value = data.businessPhone || '';
+    el = g('gv-pickup-addr'); if (el) el.value = data.pickupAddress || '';
+    el = g('gv-gate-code'); if (el) el.value = data.gateCode || '';
+  } catch(e) { console.warn('[IronG CC] loadGlobalVarSettings error:', e); }
+}
+
+async function saveGlobalVarSettings() {
+  var payload = {
+    businessName: (g('gv-biz-name') ? g('gv-biz-name').value.trim() : '') || globalVars.businessName,
+    businessPhone: (g('gv-biz-phone') ? g('gv-biz-phone').value.trim() : '') || globalVars.businessPhone,
+    pickupAddress: (g('gv-pickup-addr') ? g('gv-pickup-addr').value.trim() : '') || globalVars.pickupAddress,
+    gateCode: g('gv-gate-code') ? g('gv-gate-code').value.trim() : (globalVars.gateCode || '')
+  };
+  try {
+    var res = await fetch('/globalvars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (res.ok) {
+      globalVars = Object.assign({}, globalVars, payload);
+      if (payload.gateCode) idbPut('gateCode', payload.gateCode).catch(function(){});
+      showToast('✓ Settings saved');
+    } else { showToast('Save failed'); }
+  } catch(e) { showToast('Save failed'); }
+}
+
 // ── INIT ─────────────────────────────────────────────
 async function initApp() {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(function(g){ console.log('[IronG CC] Persistent storage:', g); });
@@ -2102,6 +2287,7 @@ async function initApp() {
   ['f-sd','f-ed','qc-sd','qc-ed'].forEach(function(id){ var el = g(id); if (el) el.setAttribute('min',today); });
   history.replaceState({page: 'dashboard'}, '', '');
   updateStats(); drawDashboard(); drawFleet(); showPage('dashboard', true);
+  try { var gvRes = await fetch('/globalvars'); if (gvRes.ok) globalVars = await gvRes.json(); } catch(e) {}
   fetchNotifications(); setInterval(fetchNotifications, 60000);
   initPushNotifications();
   var urlParams = new URLSearchParams(window.location.search);

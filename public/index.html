@@ -41,6 +41,7 @@
     <div class="drawer-item" id="dnav-fleet" onclick="navTo('fleet')"><span class="drawer-icon">🚛</span>Fleet</div>
     <div class="drawer-item" id="dnav-active-rentals" onclick="navTo('active-rentals')"><span class="drawer-icon">📋</span>Bookings</div>
     <div class="drawer-item" id="dnav-new-booking" onclick="closeDrawer();startNewDraft()"><span class="drawer-icon">📝</span>Workflow</div>
+    <div class="drawer-item" id="dnav-messaging" onclick="navTo('messaging')"><span class="drawer-icon">✉️</span>Messaging</div>
     <div class="drawer-item" id="dnav-notifications" onclick="navTo('notifications')"><span class="drawer-icon">🔔</span>Notifications<span class="drawer-notif-badge" id="drawerNotifBadge" style="display:none">0</span></div>
     <div class="drawer-item" id="dnav-settings" onclick="navTo('settings')"><span class="drawer-icon">⚙️</span>Settings</div>
   </div>
@@ -305,8 +306,52 @@
     <div id="notifBody"></div>
   </div>
 
+  <!-- MESSAGING -->
+  <div class="page" id="page-messaging">
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Customize outgoing messages. Use {tokens} to insert booking data automatically.</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Available Tokens</div>
+        <button class="btn btn-ghost btn-sm" id="tokenRefToggle" onclick="toggleTokenRef()">Show</button>
+      </div>
+      <div id="tokenRefBody" style="display:none;" class="card-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+          <div class="token-row"><span class="token-name">{firstName}</span><span class="token-desc">Customer first name</span></div>
+          <div class="token-row"><span class="token-name">{trailerName}</span><span class="token-desc">Trailer name</span></div>
+          <div class="token-row"><span class="token-name">{startDate}</span><span class="token-desc">Pickup date</span></div>
+          <div class="token-row"><span class="token-name">{startTime}</span><span class="token-desc">Pickup time</span></div>
+          <div class="token-row"><span class="token-name">{endDate}</span><span class="token-desc">Return date</span></div>
+          <div class="token-row"><span class="token-name">{endTime}</span><span class="token-desc">Return time</span></div>
+          <div class="token-row"><span class="token-name">{days}</span><span class="token-desc">Number of days</span></div>
+          <div class="token-row"><span class="token-name">{pickupAddress}</span><span class="token-desc">Storage facility address</span></div>
+          <div class="token-row"><span class="token-name">{rentalFee}</span><span class="token-desc">Rental fee amount</span></div>
+          <div class="token-row"><span class="token-name">{addOns}</span><span class="token-desc">Add-ons list (each on own line)</span></div>
+          <div class="token-row"><span class="token-name">{tax}</span><span class="token-desc">Tax amount</span></div>
+          <div class="token-row"><span class="token-name">{deposit}</span><span class="token-desc">Deposit amount</span></div>
+          <div class="token-row"><span class="token-name">{total}</span><span class="token-desc">Total due</span></div>
+          <div class="token-row"><span class="token-name">{towVehicle}</span><span class="token-desc">Customer tow vehicle</span></div>
+          <div class="token-row"><span class="token-name">{contactInfo}</span><span class="token-desc">Customer phone or email</span></div>
+          <div class="token-row"><span class="token-name">{gateCode}</span><span class="token-desc">Storage gate code</span></div>
+          <div class="token-row"><span class="token-name">{lockboxCode}</span><span class="token-desc">Trailer lockbox code</span></div>
+          <div class="token-row"><span class="token-name">{paymentUrl}</span><span class="token-desc">Stripe payment link URL</span></div>
+          <div class="token-row"><span class="token-name">{businessPhone}</span><span class="token-desc">Your business phone</span></div>
+          <div class="token-row"><span class="token-name">{businessName}</span><span class="token-desc">Business name</span></div>
+        </div>
+      </div>
+    </div>
+    <div id="messagingBody"></div>
+  </div>
+
   <!-- SETTINGS -->
   <div class="page" id="page-settings">
+    <div class="card"><div class="card-header"><div class="card-title">Business Settings</div><div style="font-size:11px;color:var(--muted);">Used in message templates</div></div><div class="card-body">
+      <div class="fg"><label class="fl">Business Name</label><input class="fi" id="gv-biz-name" type="text" placeholder="Iron G Equipment Co."></div>
+      <div class="fg"><label class="fl">Business Phone</label><input class="fi" id="gv-biz-phone" type="tel" placeholder="(405) 393-4161"></div>
+      <div class="fg"><label class="fl">Pickup Address</label><textarea class="fi form-textarea" id="gv-pickup-addr" rows="2" style="min-height:60px;" placeholder="Storage facility address"></textarea></div>
+      <div class="fg"><label class="fl">Gate Code</label><input class="fi" id="gv-gate-code" type="text" maxlength="20" placeholder="Storage gate access code"></div>
+      <button class="btn btn-primary" onclick="saveGlobalVarSettings()">Save Business Settings</button>
+    </div></div>
+
     <div class="card"><div class="card-header"><div class="card-title">Business Info</div></div><div class="card-body">
       <div class="fg"><label class="fl">Business Name</label><input class="fi" id="s-biz" value="Iron G Equipment Co. LLC"></div>
       <div class="fg"><label class="fl">Owner Name</label><input class="fi" id="s-own" value="Frank Garza"></div>
