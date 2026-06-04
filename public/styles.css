@@ -297,6 +297,24 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 .notif-alert-warn{border-top:3px solid var(--warning);background:rgba(255,167,38,.04);}
 .ntb-warn{background:rgba(255,167,38,.15);color:var(--warning);border:1px solid rgba(255,167,38,.3);}
 
+/* ── AVAILABILITY CALENDAR ── */
+.avail-cal{margin-bottom:12px;}
+.avail-cal-header{font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;color:var(--white);text-transform:uppercase;letter-spacing:2px;margin-bottom:6px;text-align:center;}
+.avail-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;}
+.avail-day-hdr{font-family:'Oswald',sans-serif;font-size:9px;color:var(--muted);text-align:center;padding:3px 0;letter-spacing:1px;}
+.avail-day{font-size:11px;text-align:center;padding:5px 1px;border-radius:2px;color:var(--text);}
+.avail-empty{background:transparent;}
+.avail-day.avail-booked{background:rgba(224,85,85,.2);color:rgba(239,100,100,.75);opacity:.85;}
+.avail-day.avail-past{color:#3a3a3a;}
+.avail-day.avail-today{outline:1px solid var(--primary);font-weight:700;color:var(--white);}
+.avail-next{font-size:11px;color:var(--muted);font-family:'Oswald',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-top:4px;}
+
+/* ── CONFLICT BANNER (Step 2) ── */
+.avail-conflict-banner{padding:10px 12px;border-radius:4px;margin-bottom:8px;font-size:13px;line-height:1.5;}
+.avail-conflict-warn{background:rgba(224,85,85,.12);border-left:3px solid var(--danger);color:#EF9A9A;}
+.avail-conflict-ok{background:rgba(76,175,80,.12);border-left:3px solid var(--success);color:#A5D6A7;}
+.avail-conflict-caution{background:rgba(255,167,38,.1);border-left:3px solid var(--warning);color:#FFCC80;}
+
 /* ── DOCS PAGE ── */
 .doc-section-label{font-family:'Oswald',sans-serif;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:2px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #1a1a1a;}
 

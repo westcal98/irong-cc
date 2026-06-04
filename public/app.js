@@ -15,6 +15,7 @@ var _currentDraftId = null;
 var _currentDraftCreatedAt = null;
 var _highestStepReached = 1;
 var _lastCalcTid = '';
+var _lastAvailTid = '';
 var globalVars = {};
 var _templateCache = {};
 
@@ -206,6 +207,8 @@ function calcPrice() {
   var st = g('f-st') ? g('f-st').value : '';
   var ed = g('f-ed') ? g('f-ed').value : '';
   var et = g('f-et') ? g('f-et').value : '';
+  checkBookingConflict(tid, sd, ed);
+  if (tid && tid !== _lastAvailTid) { _lastAvailTid = tid; updateNextAvailableHelper(tid); }
   var r = doCalc(tid, sd, st, ed, et);
   var div = g('priceCalc');
   if (!r) {
@@ -1063,6 +1066,13 @@ function _resetForm() {
   var cal = g('customAddOnsList'); if (cal) cal.innerHTML = '';
   var pc = g('priceCalc'); if (pc) pc.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Select trailer and dates</div>';
   _lastCalcTid = '';
+  _lastAvailTid = '';
+  _conflictCheckTid = '';
+  _conflictRanges = null;
+  _conflictFetching = false;
+  var cb = g('avail-conflict-banner'); if (cb) cb.style.display = 'none';
+  var nh = g('avail-next-helper'); if (nh) nh.style.display = 'none';
+  var s2btn = g('step2-next-btn'); if (s2btn) s2btn.disabled = false;
   _highestStepReached = 1;
 }
 
@@ -1369,10 +1379,12 @@ function drawFleet() {
           : '<div class="fc-renter">Rented to: <strong>' + t.renter + '</strong></div><div class="fc-renter">Due: <strong>' + t.returnDate + '</strong></div><div style="margin-top:10px;"><button class="btn btn-success btn-sm" onclick="markRetByTrailer(\'' + t.id + '\')">✓ Mark Returned</button></div>'
         ) +
         '<div id="lbx-' + t.id + '" style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;"><div class="fc-label" style="color:var(--muted);">Loading lockbox...</div></div>' +
+        '<div id="avail-cal-' + t.id + '" style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;"><div style="color:var(--muted);font-size:12px;">Loading availability...</div></div>' +
         '</div>';
     });
     fc.innerHTML = h;
     state.fleet.forEach(function(t){ drawLockboxSection(t.id); });
+    state.fleet.forEach(function(t){ drawFleetAvailability(t.id); });
   }
   var cm = g('comboManager');
   if (cm) {
@@ -2857,6 +2869,151 @@ function createBookingFromNotif(id) {
     showPage('new-booking');
     goStep(1, true);
   });
+}
+
+// ── AVAILABILITY CALENDAR (FLEET PAGE) ───────────────
+async function drawFleetAvailability(tid) {
+  var div = g('avail-cal-' + tid); if (!div) return;
+  try {
+    var res1 = fetch('/availability/' + tid);
+    var res2 = fetch('/availability/next/' + tid);
+    var r1 = await res1, r2 = await res2;
+    var ranges = r1.ok ? await r1.json() : [];
+    var nextData = r2.ok ? await r2.json() : null;
+    if (!Array.isArray(ranges)) ranges = [];
+    var calHtml = buildAvailCalendarHtml(ranges);
+    var nextTxt = '';
+    if (nextData && nextData.nextAvailableFormatted) {
+      var today = new Date().toISOString().slice(0,10);
+      nextTxt = nextData.nextAvailable === today
+        ? '<div class="avail-next" style="color:var(--success);">Available now</div>'
+        : '<div class="avail-next">Next available: ' + escHtml(nextData.nextAvailableFormatted) + '</div>';
+    }
+    div.innerHTML =
+      '<div class="fc-label" style="margin-bottom:8px;">Availability</div>' +
+      (ranges.length === 0 ? '<div style="font-size:12px;color:var(--success);margin-bottom:6px;">Available now</div>' : '') +
+      calHtml + nextTxt;
+  } catch(e) {
+    div.innerHTML = '<div class="fc-label">Availability</div><div style="font-size:12px;color:var(--muted);">Unable to load</div>';
+  }
+}
+
+function buildAvailCalendarHtml(ranges) {
+  var today = new Date(); today.setHours(0,0,0,0);
+  var todayStr = today.getFullYear() + '-' + _p2(today.getMonth()+1) + '-' + _p2(today.getDate());
+  var html = '';
+  for (var m = 0; m < 2; m++) {
+    var ms = new Date(today.getFullYear(), today.getMonth() + m, 1);
+    var yr = ms.getFullYear(), mo = ms.getMonth();
+    var mName = ms.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+    var firstDow = ms.getDay();
+    var daysInMo = new Date(yr, mo+1, 0).getDate();
+    html += '<div class="avail-cal"><div class="avail-cal-header">' + mName + '</div><div class="avail-cal-grid">';
+    ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(function(d){ html += '<div class="avail-day-hdr">' + d + '</div>'; });
+    for (var b = 0; b < firstDow; b++) html += '<div class="avail-day avail-empty"></div>';
+    for (var dy = 1; dy <= daysInMo; dy++) {
+      var ds = yr + '-' + _p2(mo+1) + '-' + _p2(dy);
+      var isBooked = ranges.some(function(r){ return ds >= r.startDate && ds <= r.endDate; });
+      var isPast = ds < todayStr;
+      var isToday = ds === todayStr;
+      var cls = 'avail-day';
+      if (isBooked) cls += ' avail-booked';
+      else if (isPast) cls += ' avail-past';
+      if (isToday) cls += ' avail-today';
+      html += '<div class="' + cls + '">' + dy + '</div>';
+    }
+    html += '</div></div>';
+  }
+  return html;
+}
+
+function _p2(n) { return n < 10 ? '0' + n : '' + n; }
+
+// ── STEP 2 — CONFLICT DETECTION ──────────────────────
+var _conflictCheckTid = '';
+var _conflictRanges = null;
+var _conflictFetching = false;
+
+function checkBookingConflict(tid, sd, ed) {
+  var banner = g('avail-conflict-banner');
+  var nextBtn = g('step2-next-btn');
+  if (!banner) return;
+  if (!tid || !sd || !ed || sd >= ed) {
+    banner.style.display = 'none';
+    if (nextBtn) nextBtn.disabled = false;
+    return;
+  }
+  // If tid changed, clear cached ranges and re-fetch
+  if (tid !== _conflictCheckTid) {
+    _conflictCheckTid = tid;
+    _conflictRanges = null;
+    _conflictFetching = false;
+  }
+  if (_conflictFetching) return;
+  if (_conflictRanges !== null) {
+    _applyConflictCheck(sd, ed, _conflictRanges, banner, nextBtn);
+    return;
+  }
+  _conflictFetching = true;
+  fetch('/availability/' + tid).then(function(res) {
+    if (!res.ok) throw new Error('fetch error');
+    return res.json();
+  }).then(function(ranges) {
+    _conflictFetching = false;
+    _conflictRanges = Array.isArray(ranges) ? ranges : [];
+    var curSd = g('f-sd') ? g('f-sd').value : '';
+    var curEd = g('f-ed') ? g('f-ed').value : '';
+    _applyConflictCheck(curSd, curEd, _conflictRanges, banner, nextBtn);
+  }).catch(function() {
+    _conflictFetching = false;
+    banner.style.display = '';
+    banner.className = 'avail-conflict-banner avail-conflict-caution';
+    banner.textContent = 'Unable to verify availability — proceed with caution';
+    if (nextBtn) nextBtn.disabled = false;
+  });
+}
+
+function _applyConflictCheck(sd, ed, ranges, banner, nextBtn) {
+  if (!sd || !ed || sd >= ed) { banner.style.display = 'none'; if (nextBtn) nextBtn.disabled = false; return; }
+  var conflict = null;
+  for (var i = 0; i < ranges.length; i++) {
+    var r = ranges[i];
+    if (r.startDate && r.endDate && sd < r.endDate && ed > r.startDate) { conflict = r; break; }
+  }
+  if (conflict) {
+    banner.style.display = '';
+    banner.className = 'avail-conflict-banner avail-conflict-warn';
+    banner.textContent = '⚠️ This trailer is already booked ' + conflict.startDate + ' – ' + conflict.endDate + '. Please choose different dates.';
+    if (nextBtn) nextBtn.disabled = true;
+  } else {
+    banner.style.display = '';
+    banner.className = 'avail-conflict-banner avail-conflict-ok';
+    banner.textContent = '✓ Dates available';
+    if (nextBtn) nextBtn.disabled = false;
+  }
+}
+
+// ── STEP 2 — NEXT AVAILABLE HELPER ───────────────────
+async function updateNextAvailableHelper(tid) {
+  var el = g('avail-next-helper'); if (!el) return;
+  if (!tid) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.textContent = 'Checking availability...';
+  try {
+    var res = await fetch('/availability/next/' + tid);
+    if (!res.ok) throw new Error('fetch error');
+    var data = await res.json();
+    var today = new Date().toISOString().slice(0,10);
+    if (data.nextAvailable === today) {
+      el.style.color = 'var(--success)';
+      el.textContent = 'Available now';
+    } else {
+      el.style.color = 'var(--muted)';
+      el.textContent = 'Next available: ' + (data.nextAvailableFormatted || data.nextAvailable);
+    }
+  } catch(e) {
+    el.style.display = 'none';
+  }
 }
 
 initApp();
