@@ -343,6 +343,20 @@ export default {
       return handlePostDoc(request, env, id);
     }
 
+    if (url.pathname === '/availability' && request.method === 'GET') {
+      return handleGetAllAvailability(request, env);
+    }
+
+    if (url.pathname.startsWith('/availability/next/') && request.method === 'GET') {
+      const trailerId = url.pathname.slice('/availability/next/'.length);
+      return handleGetAvailabilityNext(request, env, trailerId);
+    }
+
+    if (url.pathname.startsWith('/availability/') && request.method === 'GET') {
+      const trailerId = url.pathname.slice('/availability/'.length);
+      return handleGetAvailabilityForTrailer(request, env, trailerId);
+    }
+
     return env.ASSETS.fetch(request);
   },
 };
@@ -1433,6 +1447,146 @@ async function handleGetDocsForBooking(request, env, bookingId) {
     });
   } catch (err) {
     console.error('[IronG] Get docs for booking error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── AVAILABILITY HELPERS ───────────────────────────────
+
+function normalizeTrailerKey(bk) {
+  if (bk.tid) return bk.tid;
+  if (bk.trailer) return bk.trailer.toLowerCase().replace(/\s+/g, '-');
+  return 'unknown';
+}
+
+async function scanAllBookings(env) {
+  const list = await env.IRONG_KV.list({ prefix: 'booking:' });
+  // Only direct booking keys — exclude sub-keys like booking:{id}:paymentIntentId
+  const bookingKeys = list.keys.filter(k => !k.name.slice('booking:'.length).includes(':'));
+  const results = await Promise.all(
+    bookingKeys.map(async (k) => {
+      const val = await env.IRONG_KV.get(k.name);
+      try {
+        const bk = JSON.parse(val);
+        bk._bookingId = k.name.slice('booking:'.length);
+        return bk;
+      } catch { return null; }
+    })
+  );
+  return results.filter(Boolean);
+}
+
+const INACTIVE_STATUSES = new Set(['cancelled', 'complete']);
+
+function bookingToRange(bk) {
+  return {
+    bookingId: bk._bookingId,
+    startDate: bk.sd || '',
+    startTime: bk.st || bk.startTime || '',
+    endDate: bk.ed || '',
+    endTime: bk.et || bk.endTime || '',
+    status: bk.status || '',
+    customerName: bk.customerName || bk.name || (bk.firstName ? bk.firstName + (bk.lastName ? ' ' + bk.lastName : '') : '') || '',
+  };
+}
+
+function addDays(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatDateLong(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+// ── AVAILABILITY HANDLERS ──────────────────────────────
+
+async function handleGetAvailabilityForTrailer(request, env, trailerId) {
+  const cors = getCors(request);
+  try {
+    const allBookings = await scanAllBookings(env);
+    const ranges = allBookings
+      .filter(bk =>
+        !INACTIVE_STATUSES.has(bk.status) &&
+        (bk.tid === trailerId || normalizeTrailerKey(bk) === trailerId)
+      )
+      .map(bookingToRange);
+    return new Response(JSON.stringify(ranges), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Availability for trailer error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetAllAvailability(request, env) {
+  const cors = getCors(request);
+  try {
+    const allBookings = await scanAllBookings(env);
+    const grouped = {};
+    for (const bk of allBookings) {
+      if (INACTIVE_STATUSES.has(bk.status)) continue;
+      const key = normalizeTrailerKey(bk);
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(bookingToRange(bk));
+    }
+    return new Response(JSON.stringify(grouped), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] All availability error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetAvailabilityNext(request, env, trailerId) {
+  const cors = getCors(request);
+  try {
+    const allBookings = await scanAllBookings(env);
+    const trailerBookings = allBookings.filter(bk =>
+      !INACTIVE_STATUSES.has(bk.status) &&
+      (bk.tid === trailerId || normalizeTrailerKey(bk) === trailerId) &&
+      bk.sd && bk.ed
+    );
+
+    const today = new Date().toISOString().slice(0, 10);
+    let current = today;
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const bk of trailerBookings) {
+        if (current >= bk.sd && current <= bk.ed) {
+          current = addDays(bk.ed, 1);
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    return new Response(JSON.stringify({
+      nextAvailable: current,
+      nextAvailableFormatted: formatDateLong(current),
+    }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Availability next error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
