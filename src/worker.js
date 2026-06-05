@@ -8,7 +8,7 @@ function getCors(request) {
   const ao = ALLOWED_ORIGINS.has(origin) ? origin : 'https://irong-cc.westcal98.workers.dev';
   return {
     'Access-Control-Allow-Origin': ao,
-    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'POST, GET, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };
 }
@@ -355,6 +355,71 @@ export default {
     if (url.pathname.startsWith('/availability/') && request.method === 'GET') {
       const trailerId = url.pathname.slice('/availability/'.length);
       return handleGetAvailabilityForTrailer(request, env, trailerId);
+    }
+
+    if (url.pathname === '/auth/google' && request.method === 'GET') {
+      return handleAuthGoogle(request, env);
+    }
+
+    if (url.pathname === '/auth/callback' && request.method === 'GET') {
+      return handleAuthCallback(request, env);
+    }
+
+    if (url.pathname === '/auth/google/status' && request.method === 'GET') {
+      return handleAuthGoogleStatus(request, env);
+    }
+
+    if (url.pathname === '/auth/google/disconnect' && request.method === 'POST') {
+      return handleAuthGoogleDisconnect(request, env);
+    }
+
+    if (url.pathname === '/maintenance/scan-receipt' && request.method === 'POST') {
+      return handleScanReceipt(request, env);
+    }
+
+    if (url.pathname.startsWith('/maintenance/summary/') && request.method === 'GET') {
+      const trailerId = url.pathname.slice('/maintenance/summary/'.length);
+      return handleGetMaintenanceSummary(request, env, trailerId);
+    }
+
+    if (url.pathname.startsWith('/maintenance/') && request.method === 'GET') {
+      const rest = url.pathname.slice('/maintenance/'.length);
+      const parts = rest.split('/').filter(Boolean);
+      if (parts.length === 1) {
+        return handleGetMaintenance(request, env, parts[0]);
+      }
+    }
+
+    if (url.pathname.startsWith('/maintenance/') && request.method === 'POST') {
+      const rest = url.pathname.slice('/maintenance/'.length);
+      if (!rest.includes('/')) {
+        return handlePostMaintenance(request, env, rest);
+      }
+    }
+
+    if (url.pathname.startsWith('/maintenance/') && request.method === 'PUT') {
+      const rest = url.pathname.slice('/maintenance/'.length);
+      const parts = rest.split('/').filter(Boolean);
+      if (parts.length === 2) {
+        return handlePutMaintenance(request, env, parts[0], parts[1]);
+      }
+    }
+
+    if (url.pathname.startsWith('/maintenance/') && request.method === 'DELETE') {
+      const rest = url.pathname.slice('/maintenance/'.length);
+      const parts = rest.split('/').filter(Boolean);
+      if (parts.length === 2) {
+        return handleDeleteMaintenance(request, env, parts[0], parts[1]);
+      }
+    }
+
+    if (url.pathname === '/trailers' && request.method === 'GET') {
+      return handleGetTrailers(request, env);
+    }
+
+    if (url.pathname.startsWith('/trailers/') && url.pathname.endsWith('/name') && request.method === 'POST') {
+      const id = url.pathname.slice('/trailers/'.length, -'/name'.length);
+      return handlePostTrailerName(request, env, id);
     }
 
     return env.ASSETS.fetch(request);
@@ -1587,6 +1652,523 @@ async function handleGetAvailabilityNext(request, env, trailerId) {
     });
   } catch (err) {
     console.error('[IronG] Availability next error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── GOOGLE OAUTH HELPERS ───────────────────────────────
+
+async function getValidAccessToken(env) {
+  const refreshToken = await env.IRONG_KV.get('google:refresh_token');
+  if (!refreshToken) return null;
+
+  const accessToken = await env.IRONG_KV.get('google:access_token');
+  const expiryStr = await env.IRONG_KV.get('google:access_token_expiry');
+  const expiry = expiryStr ? parseInt(expiryStr, 10) : 0;
+
+  if (accessToken && expiry > Date.now() + 5 * 60 * 1000) {
+    return accessToken;
+  }
+
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+    }),
+  });
+
+  if (!res.ok) {
+    console.error('[IronG] Token refresh failed:', await res.text());
+    return null;
+  }
+
+  const data = await res.json();
+  const newExpiry = Date.now() + (data.expires_in || 3600) * 1000;
+  await env.IRONG_KV.put('google:access_token', data.access_token);
+  await env.IRONG_KV.put('google:access_token_expiry', String(newExpiry));
+  return data.access_token;
+}
+
+// ── GOOGLE OAUTH HANDLERS ──────────────────────────────
+
+async function handleAuthGoogle(request, env) {
+  const state = bytesToB64u(crypto.getRandomValues(new Uint8Array(16)));
+  await env.IRONG_KV.put('oauth:state:' + state, '1', { expirationTtl: 600 });
+  const params = new URLSearchParams({
+    client_id: env.GOOGLE_CLIENT_ID,
+    redirect_uri: 'https://irong-cc.westcal98.workers.dev/auth/callback',
+    response_type: 'code',
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    access_type: 'offline',
+    prompt: 'consent',
+    state,
+  });
+  return Response.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString(), 302);
+}
+
+async function handleAuthCallback(request, env) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  const error = url.searchParams.get('error');
+
+  if (error || !code) {
+    return Response.redirect('https://irong-cc.westcal98.workers.dev/#settings?auth=error', 302);
+  }
+
+  if (state) {
+    const stateVal = await env.IRONG_KV.get('oauth:state:' + state);
+    if (!stateVal) {
+      return Response.redirect('https://irong-cc.westcal98.workers.dev/#settings?auth=error', 302);
+    }
+    await env.IRONG_KV.delete('oauth:state:' + state);
+  }
+
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: env.GOOGLE_CLIENT_ID,
+        client_secret: env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: 'https://irong-cc.westcal98.workers.dev/auth/callback',
+        grant_type: 'authorization_code',
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      console.error('[IronG] OAuth token exchange failed:', await tokenRes.text());
+      return Response.redirect('https://irong-cc.westcal98.workers.dev/#settings?auth=error', 302);
+    }
+
+    const tokens = await tokenRes.json();
+    const { access_token, refresh_token, expires_in } = tokens;
+
+    if (refresh_token) {
+      await env.IRONG_KV.put('google:refresh_token', refresh_token);
+    }
+    await env.IRONG_KV.put('google:access_token', access_token);
+    await env.IRONG_KV.put('google:access_token_expiry', String(Date.now() + (expires_in || 3600) * 1000));
+
+    try {
+      const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: 'Bearer ' + access_token },
+      });
+      if (userRes.ok) {
+        const userInfo = await userRes.json();
+        if (userInfo.email) await env.IRONG_KV.put('google:email', userInfo.email);
+      }
+    } catch (emailErr) {
+      console.error('[IronG] Failed to fetch Google email:', emailErr);
+    }
+
+    return Response.redirect('https://irong-cc.westcal98.workers.dev/#settings?auth=success', 302);
+  } catch (err) {
+    console.error('[IronG] OAuth callback error:', err);
+    return Response.redirect('https://irong-cc.westcal98.workers.dev/#settings?auth=error', 302);
+  }
+}
+
+async function handleAuthGoogleStatus(request, env) {
+  const cors = getCors(request);
+  try {
+    const refreshToken = await env.IRONG_KV.get('google:refresh_token');
+    const email = await env.IRONG_KV.get('google:email');
+    return new Response(JSON.stringify({ connected: !!refreshToken, email: email || null }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Auth status error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleAuthGoogleDisconnect(request, env) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'google:' });
+    await Promise.all(list.keys.map(k => env.IRONG_KV.delete(k.name)));
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Auth disconnect error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── MAINTENANCE HELPERS ────────────────────────────────
+
+async function getAllMaintenanceRecords(env, trailerId) {
+  const list = await env.IRONG_KV.list({ prefix: 'maintenance:' + trailerId + ':' });
+  const entries = await Promise.all(
+    list.keys.map(async (k) => {
+      const val = await env.IRONG_KV.get(k.name);
+      try { return JSON.parse(val); } catch { return null; }
+    })
+  );
+  return entries.filter(Boolean).sort((a, b) => {
+    if (a.date && b.date) return b.date.localeCompare(a.date);
+    return (b.id || 0) - (a.id || 0);
+  });
+}
+
+async function getTrailerName(env, trailerId) {
+  const val = await env.IRONG_KV.get('trailer:' + trailerId + ':name');
+  if (val) {
+    try {
+      const obj = JSON.parse(val);
+      return obj.name || trailerId;
+    } catch { return trailerId; }
+  }
+  if (trailerId === 'utility') return 'Utility Trailer';
+  if (trailerId === 'hauler') return 'Car Hauler';
+  return trailerId;
+}
+
+// ── GOOGLE DRIVE CSV SYNC ──────────────────────────────
+
+async function syncToDrive(env, trailerId, trailerName, records) {
+  try {
+    const token = await getValidAccessToken(env);
+    if (!token) return;
+
+    async function driveGet(path) {
+      const res = await fetch('https://www.googleapis.com/drive/v3/' + path, {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      return res.json();
+    }
+
+    async function findOrCreateFolder(name, parentId) {
+      let q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+      if (parentId) q += ` and '${parentId}' in parents`;
+      const search = await driveGet('files?' + new URLSearchParams({ q, fields: 'files(id)', spaces: 'drive' }));
+      if (search.files && search.files.length > 0) return search.files[0].id;
+      const body = { name, mimeType: 'application/vnd.google-apps.folder' };
+      if (parentId) body.parents = [parentId];
+      const res = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      return data.id;
+    }
+
+    const csvHeaders = ['Date','Trailer','Service Type','Description','Parts Used','Labor Cost','Parts Cost','Total Cost','Vendor','Vendor Phone','Invoice Ref','Performed By','Next Service Due','Notes','Rental Count at Service','Created At'];
+    const csvRows = records.map(r => [
+      r.date || '',
+      trailerName,
+      r.serviceType || '',
+      r.description || '',
+      r.partsUsed || '',
+      r.laborCost || '',
+      r.partsCost || '',
+      r.totalCost || '',
+      r.vendor || '',
+      r.vendorPhone || '',
+      r.invoiceRef || '',
+      r.performedBy || '',
+      r.nextServiceDue || '',
+      r.notes || '',
+      r.rentalCountAtService || '',
+      r.createdAt || '',
+    ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','));
+    const csvContent = [csvHeaders.join(','), ...csvRows].join('\n');
+
+    const rootFolderId = await findOrCreateFolder('Iron G Equipment', null);
+    const trailerFolderId = await findOrCreateFolder(trailerName, rootFolderId);
+
+    const fileName = 'Maintenance Log — ' + trailerName + '.csv';
+    const fileQ = `name='${fileName.replace(/'/g, "\\'")}' and '${trailerFolderId}' in parents and trashed=false`;
+    const fileSearch = await driveGet('files?' + new URLSearchParams({ q: fileQ, fields: 'files(id)' }));
+
+    if (fileSearch.files && fileSearch.files.length > 0) {
+      await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileSearch.files[0].id + '?uploadType=media', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'text/csv' },
+        body: csvContent,
+      });
+    } else {
+      const metadata = JSON.stringify({ name: fileName, parents: [trailerFolderId], mimeType: 'text/csv' });
+      const boundary = 'irong_' + Date.now();
+      const multipart = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + metadata + '\r\n--' + boundary + '\r\nContent-Type: text/csv\r\n\r\n' + csvContent + '\r\n--' + boundary + '--';
+      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'multipart/related; boundary=' + boundary },
+        body: multipart,
+      });
+    }
+  } catch (err) {
+    console.error('[IronG] syncToDrive error:', err);
+  }
+}
+
+// ── MAINTENANCE HANDLERS ───────────────────────────────
+
+async function handleGetMaintenance(request, env, trailerId) {
+  const cors = getCors(request);
+  try {
+    const records = await getAllMaintenanceRecords(env, trailerId);
+    return new Response(JSON.stringify(records), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get maintenance error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePostMaintenance(request, env, trailerId) {
+  const cors = getCors(request);
+  try {
+    const body = await request.json();
+    const id = String(Date.now());
+    const record = { ...body, id, trailerId, createdAt: new Date().toISOString() };
+    await env.IRONG_KV.put('maintenance:' + trailerId + ':' + id, JSON.stringify(record));
+    const records = await getAllMaintenanceRecords(env, trailerId);
+    const trailerName = await getTrailerName(env, trailerId);
+    await syncToDrive(env, trailerId, trailerName, records);
+    return new Response(JSON.stringify(record), {
+      status: 201,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post maintenance error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePutMaintenance(request, env, trailerId, recordId) {
+  const cors = getCors(request);
+  try {
+    const key = 'maintenance:' + trailerId + ':' + recordId;
+    const existing = await env.IRONG_KV.get(key);
+    if (!existing) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    const current = JSON.parse(existing);
+    const updates = await request.json();
+    const record = { ...current, ...updates, id: recordId, trailerId, updatedAt: new Date().toISOString() };
+    await env.IRONG_KV.put(key, JSON.stringify(record));
+    const records = await getAllMaintenanceRecords(env, trailerId);
+    const trailerName = await getTrailerName(env, trailerId);
+    await syncToDrive(env, trailerId, trailerName, records);
+    return new Response(JSON.stringify(record), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Put maintenance error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleDeleteMaintenance(request, env, trailerId, recordId) {
+  const cors = getCors(request);
+  try {
+    await env.IRONG_KV.delete('maintenance:' + trailerId + ':' + recordId);
+    const records = await getAllMaintenanceRecords(env, trailerId);
+    const trailerName = await getTrailerName(env, trailerId);
+    await syncToDrive(env, trailerId, trailerName, records);
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Delete maintenance error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetMaintenanceSummary(request, env, trailerId) {
+  const cors = getCors(request);
+  try {
+    const records = await getAllMaintenanceRecords(env, trailerId);
+    let totalCost = 0;
+    let lastService = null;
+    let upcomingService = null;
+    for (const r of records) {
+      const cost = parseFloat(r.totalCost) || ((parseFloat(r.laborCost) || 0) + (parseFloat(r.partsCost) || 0));
+      totalCost += cost;
+      if (r.date && (!lastService || r.date > lastService)) lastService = r.date;
+      if (r.nextServiceDue && (!upcomingService || r.nextServiceDue < upcomingService)) upcomingService = r.nextServiceDue;
+    }
+    return new Response(JSON.stringify({
+      totalCost: Math.round(totalCost * 100) / 100,
+      recordCount: records.length,
+      lastService,
+      upcomingService,
+    }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Maintenance summary error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── RECEIPT SCANNING ───────────────────────────────────
+
+async function handleScanReceipt(request, env) {
+  const cors = getCors(request);
+  try {
+    const { imageBase64, mimeType } = await request.json();
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        system: 'Extract receipt data and return ONLY valid JSON with fields: vendorName, vendorPhone, invoiceRef, laborCost, partsCost, totalCost, date, notes — use null for any field not found',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageBase64 } },
+            { type: 'text', text: 'Extract the receipt data from this image.' },
+          ],
+        }],
+      }),
+    });
+
+    if (!res.ok) {
+      console.error('[IronG] Anthropic API error:', await res.text());
+      return new Response(JSON.stringify({ error: 'Failed to scan receipt' }), {
+        status: 500,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '{}';
+    let parsed;
+    try {
+      const cleaned = text.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      parsed = { vendorName: null, vendorPhone: null, invoiceRef: null, laborCost: null, partsCost: null, totalCost: null, date: null, notes: null };
+    }
+
+    return new Response(JSON.stringify(parsed), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Scan receipt error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── TRAILER NAME HANDLERS ──────────────────────────────
+
+async function handleGetTrailers(request, env) {
+  const cors = getCors(request);
+  const defaults = [
+    { id: 'utility', name: 'Utility Trailer' },
+    { id: 'hauler', name: 'Car Hauler' },
+  ];
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'trailer:' });
+    const nameKeys = list.keys.filter(k => {
+      const parts = k.name.slice('trailer:'.length).split(':');
+      return parts.length === 2 && parts[1] === 'name';
+    });
+
+    if (nameKeys.length === 0) {
+      return new Response(JSON.stringify(defaults), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const stored = await Promise.all(
+      nameKeys.map(async (k) => {
+        const val = await env.IRONG_KV.get(k.name);
+        try { return JSON.parse(val); } catch { return null; }
+      })
+    );
+    const storedMap = new Map(stored.filter(Boolean).map(t => [t.id, t]));
+
+    const result = defaults.map(d => storedMap.get(d.id) || d);
+    for (const t of stored.filter(Boolean)) {
+      if (!defaults.find(d => d.id === t.id)) result.push(t);
+    }
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get trailers error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePostTrailerName(request, env, id) {
+  const cors = getCors(request);
+  try {
+    const { name } = await request.json();
+    if (!name) {
+      return new Response(JSON.stringify({ error: 'name is required' }), {
+        status: 400,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    const trailer = { id, name };
+    await env.IRONG_KV.put('trailer:' + id + ':name', JSON.stringify(trailer));
+    return new Response(JSON.stringify(trailer), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post trailer name error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
