@@ -167,7 +167,7 @@ var titles = {
   notifications:'Notifications', drafts:'Drafts', 'process-return':'Process Return',
   messaging:'Messaging', docs:'Documents',
   maintenance:'Maintenance Log', 'maintenance-record':'Maintenance Record',
-  expenses:'Business Expenses'
+  expenses:'Business Expenses', financials:'Financials'
 };
 
 function showPage(id, skipPush) {
@@ -185,7 +185,7 @@ function showPage(id, skipPush) {
     'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals',
     'new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications',
     'drafts':'dnav-drafts','messaging':'dnav-messaging','docs':'dnav-docs',
-    'maintenance':'dnav-maintenance','expenses':'dnav-expenses'
+    'maintenance':'dnav-maintenance','expenses':'dnav-expenses','financials':'dnav-financials'
   };
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
@@ -200,6 +200,7 @@ function showPage(id, skipPush) {
   if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGlobalVarSettings(); loadGoogleDriveStatus(); }
   if (id === 'maintenance') drawMaintenancePage();
   if (id === 'expenses') drawExpensesPage();
+  if (id === 'financials') drawFinancialsPage();
   if (id === 'maintenance-record') { /* form already built before navTo */ }
   if (id === 'messaging') drawMessaging();
   if (id === 'docs') drawDocs();
@@ -2128,6 +2129,7 @@ function openCorporatePhone() {
 function drawDashboard() {
   updateStats();
   loadDashboardMaintAlerts();
+  loadDashboardTaxReminder();
   var df = g('dashFleet');
   if (df) {
     var h = '';
@@ -4776,5 +4778,317 @@ async function saveMileageRecord() {
   } catch(e) {
     showToast('Save failed — please try again');
     if (btn) { btn.disabled = false; btn.textContent = 'Log Trip'; }
+  }
+}
+
+// ── FINANCIALS PAGE ────────────────────────────────────
+
+async function drawFinancialsPage() {
+  var page = g('page-financials'); if (!page) return;
+  page.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);font-size:13px;">Loading financials...</div>';
+  try {
+    var results = await Promise.allSettled([
+      fetch('/revenue/summary'),
+      fetch('/expenses/summary'),
+      fetch('/tax/liability')
+    ]);
+    var revSummary = {}, expSummary = {}, taxData = {};
+    if (results[0].status === 'fulfilled' && results[0].value.ok) { try { revSummary = await results[0].value.json(); } catch(e) {} }
+    if (results[1].status === 'fulfilled' && results[1].value.ok) { try { expSummary = await results[1].value.json(); } catch(e) {} }
+    if (results[2].status === 'fulfilled' && results[2].value.ok) { try { taxData = await results[2].value.json(); } catch(e) {} }
+
+    if (!g('page-financials')) return;
+
+    var now = new Date();
+    var lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var lastMonthStr = lastMonthDate.toISOString().slice(0, 7);
+    var filedStatuses = {};
+    var taxMonths = taxData.months || taxData.data || [];
+    for (var mi = 0; mi < taxMonths.length; mi++) {
+      var mkey = taxMonths[mi].month;
+      if (mkey) filedStatuses[mkey] = !!(await idbGet('tax:filed:' + mkey));
+    }
+    if (!filedStatuses.hasOwnProperty(lastMonthStr)) {
+      filedStatuses[lastMonthStr] = !!(await idbGet('tax:filed:' + lastMonthStr));
+    }
+
+    page.innerHTML =
+      _finBuildPLSection(revSummary, expSummary) +
+      _finBuildTaxSection(taxData, filedStatuses) +
+      _finBuildMonthlyBreakdown(revSummary, expSummary, taxData) +
+      _finBuildExpenseBreakdown(expSummary);
+  } catch(e) {
+    var pg = g('page-financials');
+    if (pg) pg.innerHTML = '<div style="color:var(--danger);text-align:center;padding:40px;font-size:13px;">Failed to load financials.</div>';
+  }
+}
+
+function _finBuildPLSection(rev, exp) {
+  var totalRev = parseFloat(rev.total || rev.totalRevenue || rev.allTimeRevenue || 0);
+  var totalExp = parseFloat(exp.total || exp.totalExpenses || exp.allTime || 0);
+  var netAll = totalRev - totalExp;
+  var monRev = parseFloat(rev.currentMonthRevenue || rev.currentMonth || 0);
+  var monExp = parseFloat(exp.currentMonthTotal || 0);
+  var monNet = monRev - monExp;
+  var lmRev = parseFloat(rev.lastMonthRevenue || rev.lastMonth || 0);
+  var lmExp = parseFloat(exp.lastMonthTotal || 0);
+  var lmNet = lmRev - lmExp;
+
+  function netFmt(n) { return (n >= 0 ? '' : '−') + '$' + Math.abs(n).toFixed(2); }
+  function netClr(n) { return n >= 0 ? 'var(--success)' : 'var(--danger)'; }
+
+  return '<div class="card fin-section">' +
+    '<div class="card-header"><div class="card-title">P&amp;L Summary</div></div>' +
+    '<div class="card-body">' +
+      '<div class="fin-pl-stats">' +
+        '<div class="fin-pl-stat"><div class="fin-pl-label" style="color:#5ba3d9;">REVENUE</div><div class="fin-pl-value" style="color:#5ba3d9;">$' + totalRev.toFixed(2) + '</div></div>' +
+        '<div class="fin-pl-stat"><div class="fin-pl-label" style="color:var(--primary);">EXPENSES</div><div class="fin-pl-value" style="color:var(--primary);">$' + totalExp.toFixed(2) + '</div></div>' +
+        '<div class="fin-pl-stat"><div class="fin-pl-label" style="color:' + netClr(netAll) + ';">NET PROFIT</div><div class="fin-pl-value" style="color:' + netClr(netAll) + ';">' + netFmt(netAll) + '</div></div>' +
+      '</div>' +
+      '<div class="fin-pl-monthly">' +
+        '<div class="fin-pl-month-col">' +
+          '<div class="fin-pl-month-title">This Month</div>' +
+          '<div class="fin-pl-row"><span>Revenue</span><span style="color:#5ba3d9;">$' + monRev.toFixed(2) + '</span></div>' +
+          '<div class="fin-pl-row"><span>Expenses</span><span style="color:var(--primary);">$' + monExp.toFixed(2) + '</span></div>' +
+          '<div class="fin-pl-row fin-pl-net-row"><span>Net</span><span style="color:' + netClr(monNet) + ';">' + netFmt(monNet) + '</span></div>' +
+        '</div>' +
+        '<div class="fin-pl-month-col">' +
+          '<div class="fin-pl-month-title">Last Month</div>' +
+          '<div class="fin-pl-row"><span>Revenue</span><span style="color:#5ba3d9;">$' + lmRev.toFixed(2) + '</span></div>' +
+          '<div class="fin-pl-row"><span>Expenses</span><span style="color:var(--primary);">$' + lmExp.toFixed(2) + '</span></div>' +
+          '<div class="fin-pl-row fin-pl-net-row"><span>Net</span><span style="color:' + netClr(lmNet) + ';">' + netFmt(lmNet) + '</span></div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--muted);line-height:1.6;">Revenue from confirmed, active, and completed bookings. Expenses from logged records.</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function _finBuildTaxSection(taxData, filedStatuses) {
+  var now = new Date();
+  var today = now.toISOString().slice(0, 10);
+  var currentMonthStr = now.toISOString().slice(0, 7);
+  var lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  var lastMonthStr = lastMonthDate.toISOString().slice(0, 7);
+  var taxMonths = taxData.months || taxData.data || [];
+  var curData = null, lmData = null;
+  taxMonths.forEach(function(m) {
+    if (m.month === currentMonthStr) curData = m;
+    if (m.month === lastMonthStr) lmData = m;
+  });
+  var curTax = parseFloat((curData || {}).taxCollected || (curData || {}).tax || 0);
+  var lmTax = parseFloat((lmData || {}).taxCollected || (lmData || {}).tax || 0);
+  var ytd = parseFloat(taxData.ytdCollected || taxData.totalCollected || 0);
+
+  var curDueName = new Date(now.getFullYear(), now.getMonth() + 1, 20).toLocaleDateString('en-US', {month:'long', day:'numeric'});
+  var lmDueDateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-20';
+  var lmDueName = new Date(lmDueDateStr + 'T00:00:00').toLocaleDateString('en-US', {month:'long', day:'numeric'});
+  var curMonthLabel = new Date(currentMonthStr + '-01T00:00:00').toLocaleDateString('en-US', {month:'long', year:'numeric'});
+  var lmMonthLabel = new Date(lastMonthStr + '-01T00:00:00').toLocaleDateString('en-US', {month:'long', year:'numeric'});
+
+  var lmFiled = filedStatuses[lastMonthStr];
+  var lmStatus, lmCls;
+  if (lmFiled) {
+    lmStatus = '✓ Filed'; lmCls = 'fin-tax-filed';
+  } else if (today > lmDueDateStr) {
+    lmStatus = 'PAST DUE'; lmCls = 'fin-tax-overdue';
+  } else {
+    var diff = Math.round((new Date(lmDueDateStr + 'T00:00:00') - new Date(today + 'T00:00:00')) / (1000*60*60*24));
+    lmStatus = diff <= 10 ? 'Due Soon' : 'Pending';
+    lmCls = diff <= 10 ? 'fin-tax-soon' : 'fin-tax-pending';
+  }
+
+  var fileBtn = lmFiled ? '' :
+    '<button class="btn btn-ghost btn-sm" id="tax-file-btn-' + lastMonthStr + '" onclick="markTaxFiled(\'' + lastMonthStr + '\')" style="margin-top:10px;width:100%;">Mark as Filed</button>';
+
+  return '<div class="card fin-section">' +
+    '<div class="card-header"><div class="card-title">Sales Tax Liability</div></div>' +
+    '<div class="card-body">' +
+      '<div class="fin-tax-cards">' +
+        '<div class="fin-tax-card">' +
+          '<div class="fin-tax-month">' + escHtml(curMonthLabel) + '</div>' +
+          '<div class="fin-tax-amount">$' + curTax.toFixed(2) + '</div>' +
+          '<div class="fin-tax-due">Due ' + escHtml(curDueName) + '</div>' +
+          '<span class="fin-tax-badge fin-tax-inprogress">In Progress</span>' +
+        '</div>' +
+        '<div class="fin-tax-card">' +
+          '<div class="fin-tax-month">' + escHtml(lmMonthLabel) + '</div>' +
+          '<div class="fin-tax-amount">$' + lmTax.toFixed(2) + '</div>' +
+          '<div class="fin-tax-due">Due ' + escHtml(lmDueName) + '</div>' +
+          '<span class="fin-tax-badge ' + lmCls + '" id="tax-badge-' + lastMonthStr + '">' + lmStatus + '</span>' +
+          fileBtn +
+        '</div>' +
+      '</div>' +
+      '<div style="font-size:13px;color:var(--muted);margin-top:12px;">Year to Date Collected: <strong style="color:var(--text);">$' + ytd.toFixed(2) + '</strong></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px;">File monthly at oktap.gov by the 20th of each month.</div>' +
+      '<button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="window.open(\'https://oktap.ok.gov\',\'_blank\')">Go to OkTAP ↗</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function _finBuildMonthlyBreakdown(rev, exp, taxData) {
+  var now = new Date();
+  var months = [];
+  for (var i = 0; i < 6; i++) {
+    months.push(new Date(now.getFullYear(), now.getMonth() - i, 1).toISOString().slice(0, 7));
+  }
+  var currentMonthStr = now.toISOString().slice(0, 7);
+  var lmStr = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7);
+
+  var revByM = {};
+  (rev.byMonth || rev.months || []).forEach(function(m) { revByM[m.month] = parseFloat(m.total || m.revenue || 0); });
+  if (rev.currentMonthRevenue !== undefined || rev.currentMonth !== undefined) revByM[currentMonthStr] = parseFloat(rev.currentMonthRevenue || rev.currentMonth || 0);
+  if (rev.lastMonthRevenue !== undefined || rev.lastMonth !== undefined) revByM[lmStr] = parseFloat(rev.lastMonthRevenue || rev.lastMonth || 0);
+
+  var taxByM = {};
+  (taxData.months || taxData.data || []).forEach(function(m) { taxByM[m.month] = parseFloat(m.taxCollected || m.tax || 0); });
+
+  var expByM = {};
+  expByM[currentMonthStr] = parseFloat(exp.currentMonthTotal || 0);
+  expByM[lmStr] = parseFloat(exp.lastMonthTotal || 0);
+
+  var rows = '';
+  months.forEach(function(m) {
+    var label = new Date(m + '-01T00:00:00').toLocaleDateString('en-US', {month:'short', year:'numeric'});
+    var mRev = revByM[m] || 0, mTax = taxByM[m] || 0, mExp = expByM[m] || 0;
+    var mNet = mRev - mExp;
+    var ns = mNet >= 0 ? 'color:var(--success);' : 'color:var(--danger);';
+    rows += '<tr><td>' + escHtml(label) + '</td><td>$' + mRev.toFixed(2) + '</td><td>$' + mTax.toFixed(2) + '</td><td>$' + mExp.toFixed(2) + '</td>' +
+      '<td style="' + ns + 'font-weight:600;">' + (mNet >= 0 ? '' : '−') + '$' + Math.abs(mNet).toFixed(2) + '</td></tr>';
+  });
+
+  return '<div class="card fin-section">' +
+    '<div class="card-header"><div class="card-title">Monthly Breakdown</div><button class="btn btn-ghost btn-sm" onclick="_finExportPL()">⬇ Export P&amp;L</button></div>' +
+    '<div class="card-body" style="padding:0;overflow-x:auto;">' +
+      '<table class="fin-table">' +
+        '<thead><tr><th>Month</th><th>Revenue</th><th>Tax Coll.</th><th>Expenses</th><th>Net P/L</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>' +
+    '</div>' +
+  '</div>';
+}
+
+function _finExportPL() {
+  var rows = [['Month', 'Revenue', 'Tax Collected', 'Expenses', 'Net Profit/Loss']];
+  document.querySelectorAll('.fin-table tbody tr').forEach(function(tr) {
+    var cells = tr.querySelectorAll('td');
+    if (cells.length >= 5) rows.push(Array.from(cells).map(function(td) { return td.textContent.trim(); }));
+  });
+  var csv = rows.map(function(row) {
+    return row.map(function(cell) {
+      var s = String(cell);
+      if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1) s = '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    }).join(',');
+  }).join('\r\n');
+  var year = new Date().getFullYear();
+  var blob = new Blob([csv], {type: 'text/csv'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'iron-g-pl-' + year + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+}
+
+function _finBuildExpenseBreakdown(exp) {
+  var byCategory = exp.byCategory || {};
+  var totalDeductible = parseFloat(exp.taxDeductibleTotal || 0);
+  var cats = Object.keys(byCategory).map(function(k) { return {name: k, amount: parseFloat(byCategory[k]) || 0}; })
+    .filter(function(c) { return c.amount > 0; })
+    .sort(function(a, b) { return b.amount - a.amount; });
+  var totalExp = cats.reduce(function(s, c) { return s + c.amount; }, 0) || 1;
+
+  if (!cats.length) {
+    return '<div class="card fin-section">' +
+      '<div class="card-header"><div class="card-title">Expense Breakdown</div></div>' +
+      '<div class="card-body"><div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">No expense data yet.</div></div>' +
+    '</div>';
+  }
+
+  var bars = cats.map(function(c) {
+    var pct = (c.amount / totalExp) * 100;
+    return '<div class="fin-cat-row">' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">' +
+        '<span class="fin-cat-name">' + escHtml(c.name) + '</span>' +
+        '<span class="fin-cat-amount">$' + c.amount.toFixed(2) + ' <span class="fin-cat-pct">(' + pct.toFixed(0) + '%)</span></span>' +
+      '</div>' +
+      '<div class="fin-cat-bar-wrap"><div class="fin-cat-bar" style="width:' + Math.max(pct, 2).toFixed(1) + '%"></div></div>' +
+    '</div>';
+  }).join('');
+
+  return '<div class="card fin-section">' +
+    '<div class="card-header"><div class="card-title">Expense Breakdown</div></div>' +
+    '<div class="card-body">' +
+      bars +
+      '<div style="margin-top:14px;padding-top:14px;border-top:1px solid #1a1a1a;">' +
+        '<div style="font-size:13px;color:var(--muted);">Estimated tax deductible expenses: <strong style="color:#00c87a;">$' + totalDeductible.toFixed(2) + '</strong></div>' +
+        '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Consult a tax professional for filing advice.</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+async function markTaxFiled(month) {
+  try { await idbPut('tax:filed:' + month, true); } catch(e) {}
+  var badge = g('tax-badge-' + month);
+  if (badge) { badge.className = 'fin-tax-badge fin-tax-filed'; badge.textContent = '✓ Filed'; }
+  var btn = g('tax-file-btn-' + month);
+  if (btn) btn.style.display = 'none';
+  loadDashboardTaxReminder();
+  showToast('Marked as filed');
+}
+
+// ── DASHBOARD TAX REMINDER ─────────────────────────────
+
+async function loadDashboardTaxReminder() {
+  var container = g('dash-tax-reminder'); if (!container) return;
+  var now = new Date();
+  var today = now.toISOString().slice(0, 10);
+  var lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  var lastMonthStr = lastMonthDate.toISOString().slice(0, 7);
+
+  var filed = await idbGet('tax:filed:' + lastMonthStr);
+  if (filed) { container.innerHTML = ''; return; }
+
+  var dueY = now.getFullYear(), dueM = now.getMonth() + 1;
+  var dueDateStr = dueY + '-' + String(dueM).padStart(2, '0') + '-20';
+  var daysUntilDue = Math.round((new Date(dueDateStr + 'T00:00:00') - new Date(today + 'T00:00:00')) / (1000*60*60*24));
+
+  if (daysUntilDue > 10) { container.innerHTML = ''; return; }
+
+  var taxAmount = 0;
+  try {
+    var res = await fetch('/tax/liability');
+    if (res.ok) {
+      var td = await res.json();
+      var tms = td.months || td.data || [];
+      for (var i = 0; i < tms.length; i++) {
+        if (tms[i].month === lastMonthStr) { taxAmount = parseFloat(tms[i].taxCollected || tms[i].tax || 0); break; }
+      }
+    }
+  } catch(e) {}
+
+  var lmLabel = lastMonthDate.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+  var dueDateLabel = new Date(dueDateStr + 'T00:00:00').toLocaleDateString('en-US', {month:'long', day:'numeric'});
+  var lmSafe = escHtml(lastMonthStr);
+
+  if (daysUntilDue < 0) {
+    container.innerHTML = '<div class="card dash-tax-card dash-tax-urgent">' +
+      '<div class="card-header"><div class="card-title" style="color:var(--danger);">⚠ Sales Tax PAST DUE — $' + taxAmount.toFixed(2) + '</div>' +
+        '<button class="btn btn-ghost btn-sm" onclick="markTaxFiled(\'' + lmSafe + '\')">Mark Filed</button></div>' +
+      '<div class="card-body">' +
+        '<div style="font-size:13px;color:var(--text);margin-bottom:4px;">' + escHtml(lmLabel) + ' — was due ' + escHtml(dueDateLabel) + '</div>' +
+        '<div style="font-size:12px;color:var(--muted);">File immediately at <strong>oktap.ok.gov</strong></div>' +
+      '</div>' +
+    '</div>';
+  } else {
+    container.innerHTML = '<div class="card dash-tax-card dash-tax-warning">' +
+      '<div class="card-header"><div class="card-title" style="color:var(--warning);">🔔 Sales Tax Due ' + escHtml(dueDateLabel) + ' — $' + taxAmount.toFixed(2) + '</div>' +
+        '<button class="btn btn-ghost btn-sm" onclick="markTaxFiled(\'' + lmSafe + '\')">Mark Filed</button></div>' +
+      '<div class="card-body">' +
+        '<div style="font-size:13px;color:var(--text);margin-bottom:4px;">' + escHtml(lmLabel) + '</div>' +
+        '<div style="font-size:12px;color:var(--muted);">File by ' + escHtml(dueDateLabel) + ' at <strong>oktap.ok.gov</strong></div>' +
+      '</div>' +
+    '</div>';
   }
 }

@@ -467,3 +467,40 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 .mileage-miles{font-size:20px;font-weight:700;color:#5ba3d9;white-space:nowrap;}
 .mileage-detail{max-height:0;overflow:hidden;transition:max-height .25s ease;font-size:12px;}
 .mileage-detail.open{max-height:200px;}
+
+/* ── FINANCIALS PAGE ── */
+.fin-section{margin-bottom:0;}
+.fin-pl-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
+.fin-pl-stat{background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:12px;text-align:center;}
+.fin-pl-label{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;}
+.fin-pl-value{font-size:16px;font-weight:700;}
+.fin-pl-monthly{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
+.fin-pl-month-col{background:#111;border-radius:8px;padding:12px;}
+.fin-pl-month-title{font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px;}
+.fin-pl-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;}
+.fin-pl-net-row{border-top:1px solid #222;margin-top:4px;padding-top:6px;font-weight:600;}
+.fin-tax-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}
+.fin-tax-card{background:#111;border-radius:10px;padding:14px;border:1px solid #1e1e1e;}
+.fin-tax-month{font-size:10px;color:var(--muted);font-family:'Oswald',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
+.fin-tax-amount{font-size:22px;font-weight:700;color:var(--text);margin-bottom:4px;}
+.fin-tax-due{font-size:11px;color:var(--muted);margin-bottom:8px;}
+.fin-tax-badge{display:inline-block;border-radius:4px;padding:3px 8px;font-size:11px;font-family:'Oswald',sans-serif;letter-spacing:.5px;}
+.fin-tax-inprogress{background:rgba(100,100,100,.2);color:var(--muted);}
+.fin-tax-filed{background:rgba(0,200,120,.15);color:#00c87a;}
+.fin-tax-soon{background:rgba(255,183,0,.15);color:var(--primary);}
+.fin-tax-overdue{background:rgba(255,60,60,.15);color:var(--danger);}
+.fin-tax-pending{background:rgba(100,100,100,.2);color:var(--muted);}
+.fin-table{width:100%;border-collapse:collapse;font-size:12px;min-width:340px;}
+.fin-table th{font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;padding:10px 12px;text-align:right;border-bottom:1px solid #1a1a1a;white-space:nowrap;}
+.fin-table th:first-child{text-align:left;}
+.fin-table td{padding:10px 12px;text-align:right;border-bottom:1px solid #111;font-size:12px;white-space:nowrap;}
+.fin-table td:first-child{text-align:left;color:var(--text);}
+.fin-cat-row{margin-bottom:12px;}
+.fin-cat-name{font-size:12px;color:var(--text);}
+.fin-cat-bar-wrap{height:8px;background:#1a1a1a;border-radius:4px;overflow:hidden;margin-bottom:0;}
+.fin-cat-bar{height:100%;background:var(--primary);border-radius:4px;}
+.fin-cat-amount{font-size:12px;color:var(--text);}
+.fin-cat-pct{color:var(--muted);}
+.dash-tax-card{margin-bottom:14px;}
+.dash-tax-warning{border-top:3px solid var(--warning) !important;}
+.dash-tax-urgent{border-top:3px solid var(--danger) !important;}
