@@ -2103,6 +2103,7 @@ function openCorporatePhone() {
 // ── DASHBOARD ────────────────────────────────────────
 function drawDashboard() {
   updateStats();
+  loadDashboardMaintAlerts();
   var df = g('dashFleet');
   if (df) {
     var h = '';
@@ -3149,9 +3150,15 @@ async function drawMaintenancePage() {
     return '<button class="maint-tab' + active + '" onclick="selectMaintTrailer(\'' + t.id + '\')">' + escHtml(t.name) + '</button>';
   }).join('');
   page.innerHTML =
-    '<div style="display:flex;justify-content:flex-end;margin-bottom:14px;">' +
-      '<button class="btn btn-primary btn-sm" onclick="openNewMaintenanceRecord()">+ Add Record</button>' +
+    '<div class="maint-page-header">' +
+      '<button class="btn btn-ghost btn-sm" onclick="toggleMaintAnalytics()">📊 Analytics</button>' +
+      '<div class="maint-export-group">' +
+        '<button class="btn btn-ghost btn-sm" onclick="exportMaintenanceCSV()">⬇ CSV</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="printMaintenanceLog()">🖨 Print</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="openNewMaintenanceRecord()">+ Add Record</button>' +
+      '</div>' +
     '</div>' +
+    '<div id="maint-analytics-section" class="maint-analytics-section" style="display:none;"></div>' +
     '<div id="maint-tab-bar" class="maint-tab-bar">' + tabHtml + '</div>' +
     '<div id="maint-records-body"></div>';
   await loadMaintenanceRecords(_currentMaintTrailerId);
@@ -3812,4 +3819,268 @@ async function disconnectGoogleDrive() {
     showToast('Google Drive disconnected');
     loadGoogleDriveStatus();
   } catch(e) { showToast('Disconnect failed'); }
+}
+
+// ── MAINTENANCE ANALYTICS ─────────────────────────────
+
+function toggleMaintAnalytics() {
+  var section = g('maint-analytics-section'); if (!section) return;
+  if (section.style.display !== 'none') { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  section.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">Loading analytics...</div>';
+  loadMaintAnalytics();
+}
+
+async function loadMaintAnalytics() {
+  var section = g('maint-analytics-section'); if (!section) return;
+  try {
+    var res = await fetch('/maintenance/summary/all');
+    if (!res.ok) throw new Error('fetch failed');
+    var data = await res.json();
+    renderMaintAnalytics(data, section);
+  } catch(e) {
+    section.innerHTML = '<div style="color:var(--danger);text-align:center;padding:20px;font-size:13px;">Failed to load analytics.</div>';
+  }
+}
+
+function renderMaintAnalytics(data, section) {
+  // 1. Summary cards
+  var cardsHtml = '<div class="maint-analytics-cards">';
+  cardsHtml += '<div class="maint-analytics-card">' +
+    '<div class="mac-label">Total Spent</div>' +
+    '<div class="mac-value mac-primary">$' + (data.totalCost || 0).toFixed(2) + '</div>' +
+    '<div class="mac-sub">' + (data.totalRecords || 0) + ' records total</div>' +
+  '</div>';
+  Object.keys(data.byTrailer || {}).forEach(function(tid) {
+    var bt = data.byTrailer[tid];
+    cardsHtml += '<div class="maint-analytics-card">' +
+      '<div class="mac-label">' + escHtml(bt.trailerName) + '</div>' +
+      '<div class="mac-value">$' + (bt.totalCost || 0).toFixed(2) + '</div>' +
+      '<div class="mac-sub">' + (bt.recordCount || 0) + ' records</div>' +
+    '</div>';
+  });
+  cardsHtml += '</div>';
+
+  // 2. Monthly breakdown (last 6 months, most recent first)
+  var months = Object.keys(data.byMonth || {}).sort().reverse().slice(0, 6);
+  var monthlyHtml = '';
+  if (months.length) {
+    monthlyHtml = '<div class="maint-analytics-divider"></div>' +
+      '<div class="maint-analytics-section-title">Monthly Breakdown</div>' +
+      '<div class="maint-analytics-table">';
+    months.forEach(function(m) {
+      var md = data.byMonth[m];
+      var d = new Date(m + '-01T00:00:00');
+      var label = d.toLocaleDateString('en-US', {month:'short', year:'numeric'});
+      monthlyHtml += '<div class="mat-row">' +
+        '<span class="mat-label">' + escHtml(label) + '</span>' +
+        '<span class="mat-sub">' + md.recordCount + ' record' + (md.recordCount !== 1 ? 's' : '') + '</span>' +
+        '<span class="mat-cost">$' + (md.totalCost || 0).toFixed(2) + '</span>' +
+      '</div>';
+    });
+    monthlyHtml += '</div>';
+  }
+
+  // 3. By service type (sorted by totalCost desc)
+  var stypes = Object.keys(data.byServiceType || {}).sort(function(a, b) {
+    return (data.byServiceType[b].totalCost || 0) - (data.byServiceType[a].totalCost || 0);
+  });
+  var stypeHtml = '';
+  if (stypes.length) {
+    stypeHtml = '<div class="maint-analytics-divider"></div>' +
+      '<div class="maint-analytics-section-title">By Service Type</div>' +
+      '<div class="maint-analytics-table">';
+    stypes.forEach(function(st) {
+      var s = data.byServiceType[st];
+      stypeHtml += '<div class="mat-row">' +
+        '<span class="mat-label">' + escHtml(st) + '</span>' +
+        '<span class="mat-sub">' + s.count + '×</span>' +
+        '<span class="mat-cost">$' + (s.totalCost || 0).toFixed(2) + '</span>' +
+      '</div>';
+    });
+    stypeHtml += '</div>';
+  }
+
+  // 4. Service alerts (overdue + upcoming within 60 days)
+  var overdueItems = data.overdueService || [];
+  var upcomingItems = data.upcomingService || [];
+  var overdueHtml = '';
+  var upcomingHtml = '';
+  if (overdueItems.length) {
+    overdueHtml = '<div class="maint-service-alert">' +
+      '<div class="maint-analytics-section-title mast-danger">⚠ Overdue (' + overdueItems.length + ')</div>';
+    overdueItems.forEach(function(item) {
+      overdueHtml += '<div class="msa-item">' +
+        '<div class="msa-name">' + escHtml(item.trailerName) + '</div>' +
+        '<div class="msa-type">' + escHtml(item.serviceType) + '</div>' +
+        '<div class="msa-due msa-overdue">' + escHtml(fmtDateLong(item.nextServiceDue)) + '</div>' +
+        '<button class="btn btn-ghost btn-sm msa-view-btn" onclick="selectMaintTrailer(\'' + escHtml(item.trailerId) + '\')">View</button>' +
+      '</div>';
+    });
+    overdueHtml += '</div>';
+  }
+  if (upcomingItems.length) {
+    upcomingHtml = '<div class="maint-service-alert">' +
+      '<div class="maint-analytics-section-title mast-warning">🔔 Upcoming (' + upcomingItems.length + ')</div>';
+    upcomingItems.forEach(function(item) {
+      var daysUntil = Math.ceil((new Date(item.nextServiceDue + 'T00:00:00') - new Date()) / 86400000);
+      upcomingHtml += '<div class="msa-item">' +
+        '<div class="msa-name">' + escHtml(item.trailerName) + '</div>' +
+        '<div class="msa-type">' + escHtml(item.serviceType) + '</div>' +
+        '<div class="msa-due msa-upcoming">' + escHtml(fmtDateLong(item.nextServiceDue)) + (daysUntil > 0 ? ' (' + daysUntil + 'd)' : '') + '</div>' +
+      '</div>';
+    });
+    upcomingHtml += '</div>';
+  }
+  var serviceAlertHtml = '<div class="maint-analytics-divider"></div>' +
+    '<div class="maint-analytics-section-title">Service Alerts</div>';
+  if (!overdueHtml && !upcomingHtml) {
+    serviceAlertHtml += '<div style="color:var(--muted);font-size:13px;padding:4px 0;">No upcoming service reminders.</div>';
+  } else {
+    serviceAlertHtml += '<div class="maint-service-alerts-row">' + overdueHtml + upcomingHtml + '</div>';
+  }
+
+  // 5. Cost per rental (totalCost / latest record's rentalCountAtService per trailer)
+  var trailerLatestRental = {};
+  Object.keys(_maintenanceRecordsCache).forEach(function(cacheKey) {
+    (_maintenanceRecordsCache[cacheKey] || []).forEach(function(r) {
+      var rtid = r.trailerId || cacheKey;
+      if (rtid === 'all') return;
+      if (r.rentalCountAtService != null && r.rentalCountAtService > 0) {
+        var cur = trailerLatestRental[rtid];
+        if (!cur || (r.date || '') >= (cur.date || '')) trailerLatestRental[rtid] = r;
+      }
+    });
+  });
+  var rentalCostHtml = '';
+  var trailerKeys = Object.keys(data.byTrailer || {});
+  if (trailerKeys.length) {
+    rentalCostHtml = '<div class="maint-analytics-divider"></div>' +
+      '<div class="maint-analytics-section-title">Cost per Rental</div>' +
+      '<div class="maint-analytics-table">';
+    trailerKeys.forEach(function(tid) {
+      var bt = data.byTrailer[tid];
+      var lr = trailerLatestRental[tid];
+      var cpr = lr ? '$' + (bt.totalCost / lr.rentalCountAtService).toFixed(2) : 'N/A';
+      rentalCostHtml += '<div class="mat-row">' +
+        '<span class="mat-label">' + escHtml(bt.trailerName) + '</span>' +
+        '<span class="mat-cost">' + escHtml(cpr) + '</span>' +
+      '</div>';
+    });
+    rentalCostHtml += '</div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Based on maintenance cost ÷ rentals logged</div>';
+  }
+
+  section.innerHTML = '<div class="maint-analytics-inner">' +
+    cardsHtml + monthlyHtml + stypeHtml + serviceAlertHtml + rentalCostHtml +
+  '</div>';
+}
+
+// ── MAINTENANCE EXPORT ────────────────────────────────
+
+async function exportMaintenanceCSV() {
+  var tid = _currentMaintTrailerId || 'all';
+  showToast('Downloading CSV...');
+  try {
+    var res = await fetch('/maintenance/export/' + tid);
+    if (!res.ok) throw new Error('export failed');
+    var blob = await res.blob();
+    var today = new Date().toISOString().slice(0, 10);
+    var filename = 'maintenance-log-' + tid + '-' + today + '.csv';
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  } catch(e) { showToast('Export failed'); }
+}
+
+function printMaintenanceLog() {
+  var records = _maintenanceRecordsCache[_currentMaintTrailerId] || [];
+  var trailerLabel = _currentMaintTrailerId === 'all'
+    ? 'All Trailers'
+    : (_trailerNames[_currentMaintTrailerId] || _currentMaintTrailerId);
+  var today = new Date().toLocaleDateString('en-US', {year:'numeric', month:'long', day:'numeric'});
+
+  var totalCostSum = 0;
+  var rows = records.map(function(r) {
+    var cost = parseFloat(r.totalCost) || ((parseFloat(r.laborCost)||0) + (parseFloat(r.partsCost)||0));
+    totalCostSum += cost;
+    var serviceLabel = (r.serviceType === 'Custom' && r.customType) ? r.customType : (r.serviceType || '—');
+    return '<tr>' +
+      '<td>' + escHtml(r.date || '—') + '</td>' +
+      '<td>' + escHtml(serviceLabel) + '</td>' +
+      '<td>' + escHtml(r.description || '—') + '</td>' +
+      '<td>$' + cost.toFixed(2) + '</td>' +
+      '<td>' + escHtml(r.vendorName || r.vendor || '—') + '</td>' +
+      '<td>' + escHtml(r.performedBy || '—') + '</td>' +
+      '<td>' + escHtml(r.nextServiceDue || '—') + '</td>' +
+    '</tr>';
+  }).join('');
+
+  var printDiv = document.createElement('div');
+  printDiv.id = 'maint-print-area';
+  printDiv.innerHTML =
+    '<div class="maint-print-doc">' +
+    '<div class="maint-print-header">' +
+      '<div class="maint-print-co">Iron G Equipment Co.</div>' +
+      '<div class="maint-print-title">Maintenance Log</div>' +
+      '<div class="maint-print-sub">' + escHtml(trailerLabel) + '</div>' +
+    '</div>' +
+    '<table class="maint-print-table">' +
+      '<thead><tr>' +
+        '<th>Date</th><th>Service Type</th><th>Description</th>' +
+        '<th>Total Cost</th><th>Vendor</th><th>Performed By</th><th>Next Service Due</th>' +
+      '</tr></thead>' +
+      '<tbody>' + (rows || '<tr><td colspan="7" style="text-align:center;color:#999;">No records.</td></tr>') + '</tbody>' +
+      '<tfoot><tr>' +
+        '<td colspan="3" style="text-align:right;">Total</td>' +
+        '<td>$' + totalCostSum.toFixed(2) + '</td>' +
+        '<td colspan="3"></td>' +
+      '</tr></tfoot>' +
+    '</table>' +
+    '<div class="maint-print-footer">Generated ' + escHtml(today) + ' — Iron G Equipment Co. LLC</div>' +
+    '</div>';
+
+  document.body.appendChild(printDiv);
+  function cleanup() { if (printDiv.parentNode) document.body.removeChild(printDiv); }
+  window.addEventListener('afterprint', cleanup, {once: true});
+  setTimeout(cleanup, 60000);
+  window.print();
+}
+
+// ── DASHBOARD MAINTENANCE ALERTS ──────────────────────
+
+async function loadDashboardMaintAlerts() {
+  var container = g('dash-maint-alerts'); if (!container) return;
+  try {
+    var res = await fetch('/maintenance/summary/all');
+    if (!res.ok) throw new Error('failed');
+    var data = await res.json();
+    var overdue = data.overdueService || [];
+    var in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    var upcoming30 = (data.upcomingService || []).filter(function(s) { return s.nextServiceDue <= in30Days; });
+
+    if (overdue.length) {
+      var itemsHtml = overdue.map(function(s) {
+        return '<div style="font-size:13px;color:var(--text);margin-bottom:4px;">' + escHtml(s.trailerName) + ' — ' + escHtml(s.serviceType) + '</div>';
+      }).join('');
+      container.innerHTML = '<div class="card dash-maint-alert-card dash-maint-overdue">' +
+        '<div class="card-header"><div class="card-title" style="color:var(--danger);">⚠ ' + overdue.length + ' Overdue Service Item' + (overdue.length !== 1 ? 's' : '') + '</div>' +
+        '<button class="btn btn-ghost btn-sm" onclick="navTo(\'maintenance\')">View</button></div>' +
+        '<div class="card-body">' + itemsHtml + '</div></div>';
+    } else if (upcoming30.length) {
+      var itemsHtml = upcoming30.map(function(s) {
+        return '<div style="font-size:13px;color:var(--text);margin-bottom:4px;">' + escHtml(s.trailerName) + ' — ' + escHtml(s.serviceType) + ' (' + escHtml(s.nextServiceDue) + ')</div>';
+      }).join('');
+      container.innerHTML = '<div class="card dash-maint-alert-card dash-maint-upcoming">' +
+        '<div class="card-header"><div class="card-title" style="color:var(--warning);">🔔 ' + upcoming30.length + ' Service Due Soon</div>' +
+        '<button class="btn btn-ghost btn-sm" onclick="navTo(\'maintenance\')">View</button></div>' +
+        '<div class="card-body">' + itemsHtml + '</div></div>';
+    } else {
+      container.innerHTML = '';
+    }
+  } catch(e) {
+    container.innerHTML = '';
+  }
 }
