@@ -1395,10 +1395,9 @@ async function drawFleet() {
       var tName = _trailerNames[t.id] || t.name;
       h += '<div class="fleet-card ' + t.status + '">' +
         '<div id="fcname-' + t.id + '" class="fc-name-edit-row">' +
-          '<div class="fc-name-display" id="fcname-disp-' + t.id + '">' + escHtml(tName) + '</div>' +
-          '<button class="btn btn-ghost btn-sm" onclick="editTrailerName(\'' + t.id + '\')" style="padding:4px 8px;font-size:11px;">Edit Name</button>' +
+          '<div class="fc-name-display" id="fcname-disp-' + t.id + '" onclick="editTrailerName(\'' + t.id + '\')" style="cursor:pointer;" title="Tap to edit name">' + escHtml(tName) + '</div>' +
+          '<span class="badge b-' + t.status + '">' + (t.status==='available'?'✓ Available':'⚡ Rented') + '</span>' +
         '</div>' +
-        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;"><div class="fc-name">' + escHtml(tName) + '</div><span class="badge b-' + t.status + '">' + (t.status==='available'?'✓ Available':'⚡ Rented') + '</span></div>' +
         (t.status==='available'
           ? '<div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="startNewDraft()">+ Book This Trailer</button></div>'
           : '<div class="fc-renter">Rented to: <strong>' + t.renter + '</strong></div><div class="fc-renter">Due: <strong>' + t.returnDate + '</strong></div><div style="margin-top:10px;"><button class="btn btn-success btn-sm" onclick="markRetByTrailer(\'' + t.id + '\')">✓ Mark Returned</button></div>'
@@ -3064,12 +3063,27 @@ async function loadTrailerNames() {
       var arr = await res.json();
       _maintenanceTrailers = arr;
       _trailerNames = {};
-      arr.forEach(function(t){ _trailerNames[t.id] = t.name; });
+      arr.forEach(function(t){
+        _trailerNames[t.id] = t.name;
+        idbPut('trailer:' + t.id + ':name', t.name).catch(function(){});
+      });
+      populateTrailerDropdown();
       return;
     }
   } catch(e) {}
   _maintenanceTrailers = [{id:'utility',name:'Utility Trailer'},{id:'hauler',name:'Car Hauler'}];
   _trailerNames = {utility:'Utility Trailer',hauler:'Car Hauler'};
+  populateTrailerDropdown();
+}
+
+function populateTrailerDropdown() {
+  var sel = g('f-tr'); if (!sel) return;
+  var cur = sel.value;
+  var html = '<option value="">— Select —</option>';
+  _maintenanceTrailers.forEach(function(t){
+    html += '<option value="' + escHtml(t.id) + '"' + (t.id === cur ? ' selected' : '') + '>' + escHtml(_trailerNames[t.id] || t.name) + '</option>';
+  });
+  sel.innerHTML = html;
 }
 
 function editTrailerName(tid) {
@@ -3095,13 +3109,11 @@ async function saveTrailerName(tid) {
     _trailerNames[tid] = name;
     var idx = _maintenanceTrailers.findIndex(function(t){ return t.id === tid; });
     if (idx >= 0) _maintenanceTrailers[idx].name = name;
+    idbPut('trailer:' + tid + ':name', name).catch(function(){});
+    populateTrailerDropdown();
     var row = g('fcname-' + tid);
     if (row) row.innerHTML =
-      '<div class="fc-name-display" id="fcname-disp-' + tid + '">' + escHtml(name) + '</div>' +
-      '<button class="btn btn-ghost btn-sm" onclick="editTrailerName(\'' + tid + '\')" style="padding:4px 8px;font-size:11px;">Edit Name</button>';
-    // Also update fc-name heading below (re-draw is overkill; just update text)
-    var nameEl = row ? row.nextElementSibling : null;
-    if (nameEl) { var fcName = nameEl.querySelector('.fc-name'); if (fcName) fcName.textContent = name; }
+      '<div class="fc-name-display" id="fcname-disp-' + tid + '" onclick="editTrailerName(\'' + tid + '\')" style="cursor:pointer;">' + escHtml(name) + '</div>';
     showToast('Trailer name updated');
   } catch(e) { showToast('Failed to save name'); }
 }
@@ -3110,8 +3122,7 @@ async function cancelTrailerNameEdit(tid) {
   var row = g('fcname-' + tid); if (!row) return;
   var name = _trailerNames[tid] || '';
   row.innerHTML =
-    '<div class="fc-name-display" id="fcname-disp-' + tid + '">' + escHtml(name) + '</div>' +
-    '<button class="btn btn-ghost btn-sm" onclick="editTrailerName(\'' + tid + '\')" style="padding:4px 8px;font-size:11px;">Edit Name</button>';
+    '<div class="fc-name-display" id="fcname-disp-' + tid + '" onclick="editTrailerName(\'' + tid + '\')" style="cursor:pointer;">' + escHtml(name) + '</div>';
 }
 
 // ── MAINTENANCE PAGE ──────────────────────────────────
@@ -3119,45 +3130,95 @@ async function cancelTrailerNameEdit(tid) {
 async function drawMaintenancePage() {
   var page = g('page-maintenance'); if (!page) return;
   await loadTrailerNames();
-  if (!_currentMaintTrailerId && _maintenanceTrailers.length) {
-    _currentMaintTrailerId = _maintenanceTrailers[0].id;
-  }
+  if (!_currentMaintTrailerId) _currentMaintTrailerId = 'all';
+  var tabHtml = '<button class="maint-tab' + (_currentMaintTrailerId === 'all' ? ' active' : '') + '" onclick="selectMaintTrailer(\'all\')">All</button>';
+  tabHtml += _maintenanceTrailers.map(function(t){
+    var active = t.id === _currentMaintTrailerId ? ' active' : '';
+    return '<button class="maint-tab' + active + '" onclick="selectMaintTrailer(\'' + t.id + '\')">' + escHtml(t.name) + '</button>';
+  }).join('');
   page.innerHTML =
-    '<div id="maint-tab-bar" class="maint-tab-bar">' +
-    _maintenanceTrailers.map(function(t){
-      var active = t.id === _currentMaintTrailerId ? ' active' : '';
-      return '<button class="maint-tab' + active + '" onclick="selectMaintTrailer(\'' + t.id + '\')">' + escHtml(t.name) + '</button>';
-    }).join('') +
-    '</div>' +
     '<div style="display:flex;justify-content:flex-end;margin-bottom:14px;">' +
-      '<button class="btn btn-primary" onclick="openNewMaintenanceRecord()">+ Add Record</button>' +
+      '<button class="btn btn-primary btn-sm" onclick="openNewMaintenanceRecord()">+ Add Record</button>' +
     '</div>' +
+    '<div id="maint-tab-bar" class="maint-tab-bar">' + tabHtml + '</div>' +
     '<div id="maint-records-body"></div>';
-  if (_currentMaintTrailerId) await loadMaintenanceRecords(_currentMaintTrailerId);
+  await loadMaintenanceRecords(_currentMaintTrailerId);
 }
 
 async function selectMaintTrailer(tid) {
   _currentMaintTrailerId = tid;
   var tabBar = g('maint-tab-bar');
-  if (tabBar) tabBar.innerHTML = _maintenanceTrailers.map(function(t){
-    var active = t.id === tid ? ' active' : '';
-    return '<button class="maint-tab' + active + '" onclick="selectMaintTrailer(\'' + t.id + '\')">' + escHtml(t.name) + '</button>';
-  }).join('');
+  if (tabBar) {
+    var tabHtml = '<button class="maint-tab' + (tid === 'all' ? ' active' : '') + '" onclick="selectMaintTrailer(\'all\')">All</button>';
+    tabHtml += _maintenanceTrailers.map(function(t){
+      var active = t.id === tid ? ' active' : '';
+      return '<button class="maint-tab' + active + '" onclick="selectMaintTrailer(\'' + t.id + '\')">' + escHtml(t.name) + '</button>';
+    }).join('');
+    tabBar.innerHTML = tabHtml;
+  }
   await loadMaintenanceRecords(tid);
 }
 
-async function loadMaintenanceRecords(tid) {
-  var container = g('maint-records-body'); if (!container) return;
+function loadMaintenanceRecords(tid) {
+  var container = g('maint-records-body'); if (!container) return Promise.resolve();
   container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:20px;font-size:13px;">Loading...</div>';
-  try {
-    var res = await fetch('/maintenance/' + tid);
-    if (!res.ok) throw new Error('fetch error');
-    var records = await res.json();
-    _maintenanceRecordsCache[tid] = records;
-    renderMaintenanceRecords(records, tid, container);
-  } catch(e) {
-    container.innerHTML = '<div style="color:var(--danger);text-align:center;padding:20px;font-size:13px;">Failed to load records.</div>';
+  if (tid === 'all') {
+    loadAllMaintenanceRecordsFromIDB(container);
+    return Promise.resolve();
   }
+  return new Promise(function(resolve) {
+    var hasIdbData = false;
+    idbListPrefix('maintenance:' + tid + ':', function(items) {
+      var idbRecords = items.map(function(i){ return i.value; }).filter(Boolean);
+      idbRecords.sort(function(a, b){ return (b.date||'').localeCompare(a.date||''); });
+      if (idbRecords.length) {
+        hasIdbData = true;
+        _maintenanceRecordsCache[tid] = idbRecords;
+        renderMaintenanceRecords(idbRecords, tid, container);
+      }
+      fetch('/maintenance/' + tid).then(function(res) {
+        if (!res.ok) throw new Error('fetch error');
+        return res.json();
+      }).then(function(records) {
+        _maintenanceRecordsCache[tid] = records;
+        records.forEach(function(r) {
+          var stored = Object.assign({}, r, {trailerId: tid});
+          idbPut('maintenance:' + tid + ':' + r.id, stored).catch(function(){});
+        });
+        renderMaintenanceRecords(records, tid, container);
+        resolve();
+      }).catch(function() {
+        if (!hasIdbData) {
+          container.innerHTML = '<div style="color:var(--danger);text-align:center;padding:20px;font-size:13px;">Failed to load records.</div>';
+        }
+        resolve();
+      });
+    });
+  });
+}
+
+function loadAllMaintenanceRecordsFromIDB(container) {
+  var allRecords = [];
+  var trailers = _maintenanceTrailers;
+  var pending = trailers.length;
+  if (!pending) {
+    _maintenanceRecordsCache['all'] = [];
+    renderMaintenanceRecords([], 'all', container);
+    return;
+  }
+  trailers.forEach(function(t) {
+    idbListPrefix('maintenance:' + t.id + ':', function(items) {
+      var recs = items.map(function(i){ return i.value; }).filter(Boolean);
+      recs.forEach(function(r){ if (!r.trailerId) r.trailerId = t.id; });
+      allRecords = allRecords.concat(recs);
+      pending--;
+      if (pending === 0) {
+        allRecords.sort(function(a, b){ return (b.date||'').localeCompare(a.date||''); });
+        _maintenanceRecordsCache['all'] = allRecords;
+        renderMaintenanceRecords(allRecords, 'all', container);
+      }
+    });
+  });
 }
 
 function fmtDateLong(dateStr) {
@@ -3168,7 +3229,7 @@ function fmtDateLong(dateStr) {
 
 function renderMaintenanceRecords(records, tid, container) {
   if (!records.length) {
-    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No maintenance records yet. Add your first record.</div>';
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No maintenance records yet. Tap + Add Record to get started.</div>';
     return;
   }
   var today = new Date().toISOString().slice(0,10);
@@ -3176,30 +3237,35 @@ function renderMaintenanceRecords(records, tid, container) {
   var soonStr = soonDate.toISOString().slice(0,10);
   var h = '';
   records.forEach(function(r) {
+    var cardTid = (tid === 'all' && r.trailerId) ? r.trailerId : tid;
     var totalCost = parseFloat(r.totalCost) || ((parseFloat(r.laborCost)||0) + (parseFloat(r.partsCost)||0));
     var nextDueHtml = '';
     if (r.nextServiceDue) {
       var cls = r.nextServiceDue < today ? 'maint-next-overdue' : (r.nextServiceDue <= soonStr ? 'maint-next-soon' : 'maint-next-ok');
-      nextDueHtml = '<span class="maint-next-due ' + cls + '">Next service: ' + escHtml(r.nextServiceDue) + '</span>';
+      nextDueHtml = '<span class="maint-next-due ' + cls + '">Next: ' + escHtml(fmtDateLong(r.nextServiceDue)) + '</span>';
     }
-    var thumbHtml = r.receiptImage ? '<div style="margin-bottom:8px;"><img src="' + escHtml(r.receiptImage) + '" class="receipt-thumb" onclick="viewReceiptFull(\'' + escHtml(r.id) + '\',\'' + tid + '\')" alt="Receipt"></div>' : '';
+    var thumbHtml = r.receiptImage ? '<div style="margin-bottom:8px;"><img src="' + escHtml(r.receiptImage) + '" class="receipt-thumb" onclick="event.stopPropagation();viewReceiptFull(\'' + escHtml(r.id) + '\',\'' + cardTid + '\')" alt="Receipt"></div>' : '';
     var serviceLabel = r.serviceType === 'Custom' && r.customType ? r.customType : (r.serviceType || '');
+    var vendorDisplay = '';
+    if (r.performedBy && r.performedBy.toLowerCase() === 'self') { vendorDisplay = 'Self'; }
+    else if (r.vendor) { vendorDisplay = r.vendor; }
     h += '<div class="maint-record-card" id="mrc-' + r.id + '">' +
-      '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px;">' +
-        '<div>' +
-          '<div style="font-size:12px;color:var(--muted);font-family:\'Oswald\',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">' + escHtml(fmtDateLong(r.date)) + '</div>' +
-          (serviceLabel ? '<span class="maint-stype-badge">' + escHtml(serviceLabel) + '</span>' : '') +
+      '<div onclick="toggleMaintDetail(\'' + r.id + '\',\'' + cardTid + '\')" style="cursor:pointer;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px;">' +
+          '<div>' +
+            '<div style="font-size:12px;color:var(--muted);font-family:\'Oswald\',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">' + escHtml(fmtDateLong(r.date)) + '</div>' +
+            (serviceLabel ? '<span class="maint-stype-badge">' + escHtml(serviceLabel) + '</span>' : '') +
+          '</div>' +
+          '<div class="maint-cost">$' + totalCost.toFixed(2) + '</div>' +
         '</div>' +
-        '<div class="maint-cost">$' + totalCost.toFixed(2) + '</div>' +
+        (vendorDisplay ? '<div style="font-size:13px;color:var(--text);margin-bottom:6px;">' + escHtml(vendorDisplay) + '</div>' : '') +
+        (nextDueHtml ? '<div style="margin-bottom:8px;">' + nextDueHtml + '</div>' : '') +
+        thumbHtml +
+        '<div id="mrd-' + r.id + '" class="maint-record-detail"></div>' +
       '</div>' +
-      (r.vendor ? '<div style="font-size:13px;color:var(--text);margin-bottom:6px;">' + escHtml(r.vendor) + '</div>' : '') +
-      (nextDueHtml ? '<div style="margin-bottom:8px;">' + nextDueHtml + '</div>' : '') +
-      thumbHtml +
-      '<div id="mrd-' + r.id + '" class="maint-record-detail"></div>' +
       '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;flex-wrap:wrap;">' +
-        '<button class="btn btn-ghost btn-sm" id="mrd-toggle-' + r.id + '" onclick="toggleMaintDetail(\'' + r.id + '\',\'' + tid + '\')">Expand</button>' +
-        '<button class="btn btn-ghost btn-sm" onclick="editMaintenanceRecord(\'' + tid + '\',\'' + r.id + '\')">Edit</button>' +
-        '<button class="btn btn-danger btn-sm" onclick="deleteMaintenanceRecord(\'' + tid + '\',\'' + r.id + '\')">Delete</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="editMaintenanceRecord(\'' + cardTid + '\',\'' + r.id + '\')">Edit</button>' +
+        '<button class="btn btn-danger btn-sm" onclick="deleteMaintenanceRecord(\'' + cardTid + '\',\'' + r.id + '\')">Delete</button>' +
       '</div>' +
     '</div>';
   });
@@ -3208,10 +3274,9 @@ function renderMaintenanceRecords(records, tid, container) {
 
 function toggleMaintDetail(id, tid) {
   var el = g('mrd-' + id); if (!el) return;
-  var btn = g('mrd-toggle-' + id);
   var open = el.classList.contains('open');
-  if (open) { el.classList.remove('open'); if (btn) btn.textContent = 'Expand'; return; }
-  var records = _maintenanceRecordsCache[tid] || [];
+  if (open) { el.classList.remove('open'); return; }
+  var records = _maintenanceRecordsCache[tid] || _maintenanceRecordsCache['all'] || [];
   var r = null; for (var i = 0; i < records.length; i++) { if (records[i].id === id) { r = records[i]; break; } }
   if (!r) return;
   el.innerHTML =
@@ -3224,12 +3289,11 @@ function toggleMaintDetail(id, tid) {
     crow('Labor Cost', r.laborCost ? '$' + r.laborCost : null) +
     crow('Parts Cost', r.partsCost ? '$' + r.partsCost : null) +
     crow('Total Cost', r.totalCost ? '$' + r.totalCost : null) +
-    crow('Next Service Due', r.nextServiceDue) +
+    crow('Next Service Due', r.nextServiceDue ? fmtDateLong(r.nextServiceDue) : null) +
     crow('Rental Count', r.rentalCountAtService) +
     crow('Notes', r.notes) +
     crow('Created At', r.createdAt ? new Date(r.createdAt).toLocaleString() : null);
   el.classList.add('open');
-  if (btn) btn.textContent = 'Collapse';
 }
 
 function crow(label, val) {
@@ -3238,7 +3302,7 @@ function crow(label, val) {
 }
 
 function viewReceiptFull(id, tid) {
-  var records = _maintenanceRecordsCache[tid] || [];
+  var records = _maintenanceRecordsCache[tid] || _maintenanceRecordsCache['all'] || [];
   var r = null; for (var i = 0; i < records.length; i++) { if (records[i].id === id) { r = records[i]; break; } }
   if (!r || !r.receiptImage) return;
   var overlay = document.createElement('div');
@@ -3249,7 +3313,7 @@ function viewReceiptFull(id, tid) {
 }
 
 async function editMaintenanceRecord(tid, id) {
-  var records = _maintenanceRecordsCache[tid] || [];
+  var records = _maintenanceRecordsCache[tid] || _maintenanceRecordsCache['all'] || [];
   var r = null; for (var i = 0; i < records.length; i++) { if (records[i].id === id) { r = records[i]; break; } }
   if (!r) return;
   _editingMaintenanceRecord = r;
@@ -3261,11 +3325,15 @@ async function deleteMaintenanceRecord(tid, id) {
   try {
     var res = await fetch('/maintenance/' + tid + '/' + id, {method:'DELETE'});
     if (!res.ok) throw new Error('delete failed');
+    idbDelete('maintenance:' + tid + ':' + id).catch(function(){});
     if (_maintenanceRecordsCache[tid]) {
       _maintenanceRecordsCache[tid] = _maintenanceRecordsCache[tid].filter(function(r){ return r.id !== id; });
     }
+    if (_maintenanceRecordsCache['all']) {
+      _maintenanceRecordsCache['all'] = _maintenanceRecordsCache['all'].filter(function(r){ return r.id !== id; });
+    }
     var container = g('maint-records-body');
-    if (container) renderMaintenanceRecords(_maintenanceRecordsCache[tid] || [], tid, container);
+    if (container) renderMaintenanceRecords(_maintenanceRecordsCache[_currentMaintTrailerId] || [], _currentMaintTrailerId, container);
     showToast('Record deleted');
   } catch(e) { showToast('Delete failed'); }
 }
