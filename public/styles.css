@@ -345,3 +345,24 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 .drive-status-badge{display:inline-flex;align-items:center;gap:6px;font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:6px 12px;border-radius:4px;}
 .drive-connected{background:rgba(76,175,80,.12);color:var(--success);border:1px solid rgba(76,175,80,.3);}
 .drive-disconnected{background:rgba(154,154,154,.08);color:var(--muted);border:1px solid #3a3a3a;}
+
+/* ── MAINTENANCE SLIDE PANEL ── */
+.maint-panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:400;}
+.maint-panel-overlay.open{display:block;}
+.maint-slide-panel{position:fixed;left:0;right:0;bottom:0;max-height:92vh;background:#111;border-top:1px solid #2a2a2a;border-radius:12px 12px 0 0;z-index:401;transform:translateY(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);display:flex;flex-direction:column;}
+.maint-slide-panel.open{transform:translateY(0);}
+.maint-panel-handle{width:40px;height:4px;background:#3a3a3a;border-radius:2px;margin:12px auto 4px;flex-shrink:0;}
+.maint-panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px 12px;border-bottom:1px solid #1a1a1a;flex-shrink:0;}
+.maint-panel-title{font-family:'Oswald',sans-serif;font-size:14px;font-weight:700;color:var(--white);text-transform:uppercase;letter-spacing:2px;}
+.maint-panel-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:2px 6px;line-height:1;}
+.maint-panel-close:hover{color:var(--white);}
+.maint-panel-body{overflow-y:auto;padding:16px;flex:1;padding-bottom:32px;}
+.maint-cost-row{display:flex;align-items:center;gap:8px;}
+.maint-cost-prefix{font-family:'Oswald',sans-serif;font-size:16px;font-weight:700;color:var(--primary);flex-shrink:0;line-height:1;}
+.maint-pill-toggle{display:flex;border:1px solid #3a3a3a;border-radius:4px;overflow:hidden;}
+.maint-pill-opt{flex:1;padding:10px;text-align:center;cursor:pointer;font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);background:#1a1a1a;transition:all .2s;border:none;}
+.maint-pill-opt.active{background:var(--primary);color:var(--white);}
+.maint-field-error{font-size:11px;color:var(--danger);margin-top:4px;display:none;}
+.maint-field-error.vis{display:block;}
+.maint-total-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.maint-total-header .fl{margin:0;}

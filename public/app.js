@@ -25,6 +25,8 @@ var _editingMaintenanceRecord = null;
 var _maintenanceRecordsCache = {};
 var _serviceTypes = null;
 var _pendingReceiptImage = null;
+var _totalCostOverride = false;
+var _maintPerformedBy = 'Self';
 var DEFAULT_SERVICE_TYPES = [
   'Tire Rotation/Replacement','Wheel Bearing Service','Brake Inspection/Replacement',
   'Light Repair/Replacement','Wiring Repair','Coupler Service/Replacement',
@@ -3248,7 +3250,7 @@ function renderMaintenanceRecords(records, tid, container) {
     var serviceLabel = r.serviceType === 'Custom' && r.customType ? r.customType : (r.serviceType || '');
     var vendorDisplay = '';
     if (r.performedBy && r.performedBy.toLowerCase() === 'self') { vendorDisplay = 'Self'; }
-    else if (r.vendor) { vendorDisplay = r.vendor; }
+    else if (r.vendorName || r.vendor) { vendorDisplay = r.vendorName || r.vendor; }
     h += '<div class="maint-record-card" id="mrc-' + r.id + '">' +
       '<div onclick="toggleMaintDetail(\'' + r.id + '\',\'' + cardTid + '\')" style="cursor:pointer;">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px;">' +
@@ -3283,7 +3285,7 @@ function toggleMaintDetail(id, tid) {
     crow('Description', r.description) +
     crow('Parts Used', r.partsUsed) +
     crow('Performed By', r.performedBy) +
-    crow('Vendor', r.vendor) +
+    crow('Vendor', r.vendorName || r.vendor) +
     crow('Vendor Phone', r.vendorPhone) +
     crow('Invoice Ref', r.invoiceRef) +
     crow('Labor Cost', r.laborCost ? '$' + r.laborCost : null) +
@@ -3346,48 +3348,120 @@ async function openNewMaintenanceRecord() {
 
 async function openMaintenanceRecordForm(tid, record) {
   _editingMaintenanceRecord = record || null;
-  _currentMaintTrailerId = tid;
   _pendingReceiptImage = null;
-  var types = await getServiceTypes();
-  var today = new Date().toISOString().slice(0,10);
+  _totalCostOverride = false;
   var r = record || {};
   var isEdit = !!record;
-  var trailerName = _trailerNames[tid] || tid;
+  var types = await getServiceTypes();
+  var today = new Date().toISOString().slice(0,10);
+
+  var selectedTid = isEdit ? (r.trailerId || tid) : (tid !== 'all' ? tid : '');
+  var trailerOptions = '<option value="">— Select Trailer —</option>' +
+    _maintenanceTrailers.map(function(t){
+      return '<option value="' + escHtml(t.id) + '"' + (t.id === selectedTid ? ' selected' : '') + '>' + escHtml(_trailerNames[t.id] || t.name) + '</option>';
+    }).join('');
+
   var typeOptions = '<option value="">— Select —</option>' + types.map(function(t){
-    var sel = t === (r.serviceType || '') ? ' selected' : '';
-    return '<option value="' + escHtml(t) + '"' + sel + '>' + escHtml(t) + '</option>';
+    return '<option value="' + escHtml(t) + '"' + (t === (r.serviceType || '') ? ' selected' : '') + '>' + escHtml(t) + '</option>';
   }).join('');
+
   var showCustom = (r.serviceType === 'Custom') ? '' : 'none';
   var laborVal = r.laborCost != null ? String(r.laborCost) : '0';
   var partsVal = r.partsCost != null ? String(r.partsCost) : '0';
   var totalVal = r.totalCost != null ? String(r.totalCost) : String((parseFloat(laborVal)||0)+(parseFloat(partsVal)||0));
+
+  var pbVal = (r.performedBy === 'Vendor') ? 'Vendor' : 'Self';
+  _maintPerformedBy = pbVal;
+
   var thumbHtml = r.receiptImage
-    ? '<div id="receipt-thumb-wrap" style="margin-top:8px;display:flex;align-items:center;gap:8px;"><img id="receipt-thumb-preview" src="' + escHtml(r.receiptImage) + '" class="receipt-thumb"><button class="btn btn-ghost btn-sm" id="receipt-remove-btn" onclick="removeReceiptImage()" type="button">Remove</button></div>'
-    : '<div id="receipt-thumb-wrap" style="margin-top:8px;display:none;"><img id="receipt-thumb-preview" src="" class="receipt-thumb" style="display:none;"><button class="btn btn-ghost btn-sm" id="receipt-remove-btn" onclick="removeReceiptImage()" type="button">Remove</button></div>';
-  var formHtml =
-    '<div class="card">' +
-    '<div class="card-header"><div class="card-title">' + (isEdit ? 'Edit Record' : 'New Record') + ' — ' + escHtml(trailerName) + '</div></div>' +
-    '<div class="card-body">' +
-    '<div class="fg"><label class="fl">Date *</label><input class="fi" id="mf-date" type="date" value="' + escHtml(r.date || today) + '"></div>' +
+    ? '<div id="receipt-thumb-wrap" style="margin-top:8px;display:flex;align-items:center;gap:8px;"><img id="receipt-thumb-preview" src="' + escHtml(r.receiptImage) + '" class="receipt-thumb"><button class="btn btn-ghost btn-sm" id="receipt-remove-btn" onclick="removeReceiptImage()" type="button">× Remove</button></div>'
+    : '<div id="receipt-thumb-wrap" style="margin-top:8px;display:none;flex-direction:row;align-items:center;gap:8px;"><img id="receipt-thumb-preview" src="" class="receipt-thumb" style="display:none;"><button class="btn btn-ghost btn-sm" id="receipt-remove-btn" onclick="removeReceiptImage()" type="button" style="display:none;">× Remove</button></div>';
+
+  var html =
+    '<div class="fg"><label class="fl">Trailer *</label>' +
+      '<select class="form-select" id="mf-trailer">' + trailerOptions + '</select>' +
+      '<div class="maint-field-error" id="mf-err-trailer">Select a trailer</div>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Service Date *</label>' +
+      '<input class="fi" id="mf-date" type="date" value="' + escHtml(r.date || today) + '">' +
+      '<div class="maint-field-error" id="mf-err-date">Service date is required</div>' +
+    '</div>' +
+
     '<div class="fg"><label class="fl">Service Type *</label>' +
       '<div style="display:flex;gap:8px;align-items:center;">' +
         '<select class="form-select" id="mf-service-type" onchange="onServiceTypeChange()" style="flex:1;">' + typeOptions + '</select>' +
-        '<button class="btn btn-ghost btn-sm" onclick="openManageServiceTypes()" type="button">Manage List</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="openManageServiceTypes()" type="button">Manage</button>' +
+      '</div>' +
+      '<div class="maint-field-error" id="mf-err-service-type">Select a service type</div>' +
+    '</div>' +
+
+    '<div id="mf-custom-type-row" class="fg" style="display:' + showCustom + ';">' +
+      '<label class="fl">Custom Type *</label>' +
+      '<input class="fi" id="mf-custom-type" type="text" value="' + escHtml(r.customType || '') + '" placeholder="Describe service type">' +
+      '<div class="maint-field-error" id="mf-err-custom-type">Custom type is required</div>' +
+    '</div>' +
+
+    '<div id="stype-manage-area" style="display:none;"></div>' +
+
+    '<div class="fg"><label class="fl">Description *</label>' +
+      '<textarea class="fi form-textarea" id="mf-description" rows="3" placeholder="What was done?">' + escHtml(r.description || '') + '</textarea>' +
+      '<div class="maint-field-error" id="mf-err-description">Description is required</div>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Parts Used</label>' +
+      '<input class="fi" id="mf-parts-used" type="text" value="' + escHtml(r.partsUsed || '') + '" placeholder="Part numbers, descriptions...">' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Labor Cost</label>' +
+      '<div class="maint-cost-row"><span class="maint-cost-prefix">$</span>' +
+        '<input class="fi" id="mf-labor" type="number" min="0" step="0.01" value="' + escHtml(laborVal) + '" oninput="calcMaintenanceTotalCost()" style="flex:1;">' +
       '</div>' +
     '</div>' +
-    '<div id="mf-custom-type-row" class="fg" style="display:' + showCustom + ';"><label class="fl">Custom Type *</label><input class="fi" id="mf-custom-type" type="text" value="' + escHtml(r.customType || '') + '" placeholder="Describe service type"></div>' +
-    '<div id="stype-manage-area" style="display:none;"></div>' +
-    '<div class="fg"><label class="fl">Description *</label><textarea class="fi form-textarea" id="mf-description" rows="3" placeholder="What was done?">' + escHtml(r.description || '') + '</textarea></div>' +
-    '<div class="fg"><label class="fl">Parts Used</label><input class="fi" id="mf-parts-used" type="text" value="' + escHtml(r.partsUsed || '') + '" placeholder="Part numbers, descriptions..."></div>' +
-    '<div class="fg"><label class="fl">Performed By *</label><input class="fi" id="mf-performed-by" type="text" value="' + escHtml(r.performedBy || '') + '" placeholder="Self or vendor name"></div>' +
-    '<div class="fr"><div class="fg"><label class="fl">Vendor Name</label><input class="fi" id="mf-vendor" type="text" value="' + escHtml(r.vendor || '') + '"></div><div class="fg"><label class="fl">Vendor Phone</label><input class="fi" id="mf-vendor-phone" type="tel" value="' + escHtml(r.vendorPhone || '') + '"></div></div>' +
-    '<div class="fg"><label class="fl">Invoice/Receipt Ref</label><input class="fi" id="mf-invoice-ref" type="text" value="' + escHtml(r.invoiceRef || '') + '"></div>' +
-    '<div class="fr"><div class="fg"><label class="fl">Labor Cost ($)</label><input class="fi" id="mf-labor" type="number" min="0" step="0.01" value="' + escHtml(laborVal) + '" oninput="calcMaintenanceTotalCost()"></div><div class="fg"><label class="fl">Parts Cost ($)</label><input class="fi" id="mf-parts" type="number" min="0" step="0.01" value="' + escHtml(partsVal) + '" oninput="calcMaintenanceTotalCost()"></div></div>' +
-    '<div class="fg"><label class="fl">Total Cost ($)</label><input class="fi" id="mf-total" type="number" min="0" step="0.01" value="' + escHtml(totalVal) + '"></div>' +
-    '<div class="fg"><label class="fl">Next Service Due</label><input class="fi" id="mf-next-due" type="date" value="' + escHtml(r.nextServiceDue || '') + '"></div>' +
-    '<div class="fg"><label class="fl">Rental Count at Service</label><input class="fi" id="mf-rental-count" type="number" min="0" value="' + escHtml(r.rentalCountAtService != null ? String(r.rentalCountAtService) : '') + '" placeholder="How many rentals on this trailer so far"></div>' +
-    '<div class="fg"><label class="fl">Notes</label><textarea class="fi form-textarea" id="mf-notes" rows="3">' + escHtml(r.notes || '') + '</textarea></div>' +
-    '<div class="fg"><label class="fl">Receipt Image</label>' +
+
+    '<div class="fg"><label class="fl">Parts Cost</label>' +
+      '<div class="maint-cost-row"><span class="maint-cost-prefix">$</span>' +
+        '<input class="fi" id="mf-parts" type="number" min="0" step="0.01" value="' + escHtml(partsVal) + '" oninput="calcMaintenanceTotalCost()" style="flex:1;">' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="fg">' +
+      '<div class="maint-total-header"><label class="fl">Total Cost</label>' +
+        '<button id="mf-total-toggle" class="btn btn-ghost btn-sm" onclick="toggleTotalCostOverride()" type="button" style="font-size:10px;padding:3px 8px;">Override</button>' +
+      '</div>' +
+      '<div class="maint-cost-row"><span class="maint-cost-prefix">$</span>' +
+        '<input class="fi" id="mf-total" type="number" min="0" step="0.01" value="' + escHtml(totalVal) + '" readonly style="flex:1;background:#111;color:var(--muted);">' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Vendor Name</label>' +
+      '<input class="fi" id="mf-vendor" type="text" value="' + escHtml(r.vendorName || r.vendor || '') + '">' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Vendor Phone</label>' +
+      '<input class="fi" id="mf-vendor-phone" type="tel" value="' + escHtml(r.vendorPhone || '') + '">' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Invoice / Receipt #</label>' +
+      '<input class="fi" id="mf-invoice-ref" type="text" value="' + escHtml(r.invoiceRef || '') + '">' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Performed By</label>' +
+      '<div class="maint-pill-toggle">' +
+        '<button class="maint-pill-opt' + (pbVal === 'Self' ? ' active' : '') + '" id="mpb-self" onclick="setPerformedBy(\'Self\')" type="button">Self</button>' +
+        '<button class="maint-pill-opt' + (pbVal === 'Vendor' ? ' active' : '') + '" id="mpb-vendor" onclick="setPerformedBy(\'Vendor\')" type="button">Vendor</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Next Service Due</label>' +
+      '<input class="fi" id="mf-next-due" type="date" value="' + escHtml(r.nextServiceDue || '') + '">' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Notes</label>' +
+      '<textarea class="fi form-textarea" id="mf-notes" rows="3">' + escHtml(r.notes || '') + '</textarea>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Receipt Scanner</label>' +
       '<input type="file" id="mf-receipt-input" accept="image/*" capture="camera" style="display:none;" onchange="scanReceiptImage(this)">' +
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
         '<button class="btn btn-ghost btn-sm" onclick="g(\'mf-receipt-input\').click()" type="button">📷 Scan Receipt</button>' +
@@ -3395,14 +3469,54 @@ async function openMaintenanceRecordForm(tid, record) {
       '</div>' +
       thumbHtml +
     '</div>' +
-    '</div></div>' +
-    '<div style="display:flex;gap:8px;margin-top:14px;">' +
-      '<button class="btn btn-primary" id="maint-save-btn" onclick="saveMaintenanceRecord()" style="flex:1;">Save Record</button>' +
-      '<button class="btn btn-ghost" onclick="showPage(\'maintenance\')" style="flex:1;">Cancel</button>' +
-    '</div>';
-  var formBody = g('maint-record-form-body');
-  if (formBody) formBody.innerHTML = formHtml;
-  showPage('maintenance-record');
+
+    '<button class="btn btn-primary" id="maint-save-btn" onclick="saveMaintenanceRecord()" style="width:100%;padding:14px;font-size:14px;letter-spacing:2px;margin-top:8px;" type="button">Save Record</button>';
+
+  var titleEl = g('maint-panel-title');
+  if (titleEl) titleEl.textContent = isEdit ? 'Edit Record' : 'New Record';
+  var panelBody = g('maint-panel-body');
+  if (panelBody) panelBody.innerHTML = html;
+  openMaintPanel();
+}
+
+function openMaintPanel() {
+  var overlay = g('maint-panel-overlay');
+  var panel = g('maint-slide-panel');
+  if (overlay) overlay.classList.add('open');
+  if (panel) panel.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeMaintPanel() {
+  var overlay = g('maint-panel-overlay');
+  var panel = g('maint-slide-panel');
+  if (overlay) overlay.classList.remove('open');
+  if (panel) panel.classList.remove('open');
+  document.body.style.overflow = '';
+  _editingMaintenanceRecord = null;
+  _pendingReceiptImage = null;
+  _totalCostOverride = false;
+  _maintPerformedBy = 'Self';
+}
+
+function setPerformedBy(val) {
+  _maintPerformedBy = val;
+  var selfBtn = g('mpb-self'), vendorBtn = g('mpb-vendor');
+  if (selfBtn) selfBtn.classList.toggle('active', val === 'Self');
+  if (vendorBtn) vendorBtn.classList.toggle('active', val === 'Vendor');
+}
+
+function toggleTotalCostOverride() {
+  _totalCostOverride = !_totalCostOverride;
+  var inp = g('mf-total'), btn = g('mf-total-toggle');
+  if (_totalCostOverride) {
+    if (inp) { inp.removeAttribute('readonly'); inp.style.background = ''; inp.style.color = ''; inp.focus(); }
+    if (btn) btn.textContent = 'Auto';
+  } else {
+    if (inp) { inp.setAttribute('readonly', ''); inp.style.background = '#111'; inp.style.color = 'var(--muted)'; }
+    if (btn) btn.textContent = 'Override';
+    calcMaintenanceTotalCost();
+  }
 }
 
 function onServiceTypeChange() {
@@ -3412,6 +3526,7 @@ function onServiceTypeChange() {
 }
 
 function calcMaintenanceTotalCost() {
+  if (_totalCostOverride) return;
   var labor = parseFloat(g('mf-labor') ? g('mf-labor').value : 0) || 0;
   var parts = parseFloat(g('mf-parts') ? g('mf-parts').value : 0) || 0;
   var tot = g('mf-total');
@@ -3497,9 +3612,9 @@ function scanReceiptImage(input) {
     var wrap = g('receipt-thumb-wrap');
     var thumb = g('receipt-thumb-preview');
     var removeBtn = g('receipt-remove-btn');
-    if (thumb) { thumb.src = dataUrl; thumb.style.display = ''; }
-    if (wrap) wrap.style.display = 'flex';
-    if (removeBtn) removeBtn.style.display = '';
+    if (thumb) { thumb.src = dataUrl; thumb.style.display = 'block'; }
+    if (removeBtn) { removeBtn.style.display = 'inline-flex'; }
+    if (wrap) { wrap.style.display = 'flex'; }
     fetch('/maintenance/scan-receipt', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -3515,7 +3630,8 @@ function scanReceiptImage(input) {
       if (data.laborCost != null) { setField('mf-labor', data.laborCost); calcMaintenanceTotalCost(); }
       if (data.partsCost != null) { setField('mf-parts', data.partsCost); calcMaintenanceTotalCost(); }
       if (data.totalCost != null) setField('mf-total', data.totalCost);
-      var dateEl = g('mf-date'); if (dateEl && !dateEl.value && data.date) dateEl.value = data.date;
+      var _today = new Date().toISOString().slice(0,10);
+      var dateEl = g('mf-date'); if (dateEl && dateEl.value === _today && data.date) dateEl.value = data.date;
       if (data.notes) { var notesEl = g('mf-notes'); if (notesEl) notesEl.value = (notesEl.value ? notesEl.value + '\n' : '') + data.notes; }
       if (statusEl) statusEl.style.display = 'none';
       showToast('✓ Receipt scanned — review and confirm fields');
@@ -3529,6 +3645,7 @@ function scanReceiptImage(input) {
 function removeReceiptImage() {
   _pendingReceiptImage = null;
   var thumb = g('receipt-thumb-preview'); if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
+  var removeBtn = g('receipt-remove-btn'); if (removeBtn) removeBtn.style.display = 'none';
   var wrap = g('receipt-thumb-wrap'); if (wrap) wrap.style.display = 'none';
   var inp = g('mf-receipt-input'); if (inp) inp.value = '';
   if (_editingMaintenanceRecord) _editingMaintenanceRecord._clearImage = true;
@@ -3536,38 +3653,60 @@ function removeReceiptImage() {
 
 // ── SAVE MAINTENANCE RECORD ───────────────────────────
 
+function _setMaintErr(id, show) {
+  var el = g(id); if (el) el.classList.toggle('vis', show);
+}
+function _clearMaintErrs() {
+  ['mf-err-trailer','mf-err-date','mf-err-service-type','mf-err-custom-type','mf-err-description'].forEach(function(id){
+    var el = g(id); if (el) el.classList.remove('vis');
+  });
+}
+
 async function saveMaintenanceRecord() {
-  var tid = _currentMaintTrailerId; if (!tid) return;
+  _clearMaintErrs();
+  var trailerEl = g('mf-trailer');
+  var tid = trailerEl ? trailerEl.value : '';
   var dateVal = g('mf-date') ? g('mf-date').value : '';
   var serviceType = g('mf-service-type') ? g('mf-service-type').value : '';
   var customType = g('mf-custom-type') ? g('mf-custom-type').value.trim() : '';
   var description = g('mf-description') ? g('mf-description').value.trim() : '';
-  var performedBy = g('mf-performed-by') ? g('mf-performed-by').value.trim() : '';
-  if (!dateVal) { showToast('Date is required'); return; }
-  if (!serviceType) { showToast('Service Type is required'); return; }
-  if (serviceType === 'Custom' && !customType) { showToast('Custom type description is required'); return; }
-  if (!description) { showToast('Description is required'); return; }
-  if (!performedBy) { showToast('Performed By is required'); return; }
+
+  var valid = true;
+  if (!tid) { _setMaintErr('mf-err-trailer', true); valid = false; }
+  if (!dateVal) { _setMaintErr('mf-err-date', true); valid = false; }
+  if (!serviceType) { _setMaintErr('mf-err-service-type', true); valid = false; }
+  if (serviceType === 'Custom' && !customType) { _setMaintErr('mf-err-custom-type', true); valid = false; }
+  if (!description) { _setMaintErr('mf-err-description', true); valid = false; }
+  if (!valid) return;
+
   var laborCost = parseFloat(g('mf-labor') ? g('mf-labor').value : 0) || 0;
   var partsCost = parseFloat(g('mf-parts') ? g('mf-parts').value : 0) || 0;
   var totalEl = g('mf-total');
   var totalCost = totalEl ? (parseFloat(totalEl.value) || (laborCost + partsCost)) : (laborCost + partsCost);
   var existingImage = _editingMaintenanceRecord && !(_editingMaintenanceRecord._clearImage) ? _editingMaintenanceRecord.receiptImage : null;
+  var now = Date.now();
   var record = {
-    date: dateVal, serviceType: serviceType,
+    id: _editingMaintenanceRecord ? _editingMaintenanceRecord.id : now,
+    trailerId: tid,
+    trailerName: _trailerNames[tid] || tid,
+    date: dateVal,
+    serviceType: serviceType,
     customType: serviceType === 'Custom' ? customType : '',
     description: description,
     partsUsed: g('mf-parts-used') ? g('mf-parts-used').value.trim() : '',
-    performedBy: performedBy,
-    vendor: g('mf-vendor') ? g('mf-vendor').value.trim() : '',
+    laborCost: laborCost,
+    partsCost: partsCost,
+    totalCost: totalCost,
+    vendorName: g('mf-vendor') ? g('mf-vendor').value.trim() : '',
     vendorPhone: g('mf-vendor-phone') ? g('mf-vendor-phone').value.trim() : '',
     invoiceRef: g('mf-invoice-ref') ? g('mf-invoice-ref').value.trim() : '',
-    laborCost: laborCost, partsCost: partsCost, totalCost: totalCost,
+    performedBy: _maintPerformedBy,
     nextServiceDue: g('mf-next-due') ? g('mf-next-due').value : '',
-    rentalCountAtService: g('mf-rental-count') ? g('mf-rental-count').value : '',
     notes: g('mf-notes') ? g('mf-notes').value.trim() : '',
-    receiptImage: _pendingReceiptImage || existingImage || null
+    receiptImage: _pendingReceiptImage || existingImage || null,
+    createdAt: _editingMaintenanceRecord ? (_editingMaintenanceRecord.createdAt || now) : now
   };
+
   var btn = g('maint-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
   try {
@@ -3577,20 +3716,32 @@ async function saveMaintenanceRecord() {
     var method = _editingMaintenanceRecord ? 'PUT' : 'POST';
     var res = await fetch(url, {method: method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(record)});
     if (!res.ok) throw new Error('save failed');
+    var savedRecord = null;
+    try { savedRecord = await res.json(); } catch(e) {}
+    var savedId = (savedRecord && savedRecord.id) ? savedRecord.id : record.id;
+    var idbRecord = Object.assign({}, record, savedRecord || {}, {trailerId: tid});
+    idbPut('maintenance:' + tid + ':' + savedId, idbRecord).catch(function(){});
+
     _pendingReceiptImage = null;
     _editingMaintenanceRecord = null;
     delete _maintenanceRecordsCache[tid];
+    delete _maintenanceRecordsCache['all'];
+
+    closeMaintPanel();
     showToast('Record saved — syncing to Drive...');
-    showPage('maintenance');
+
+    var container = g('maint-records-body');
+    if (container) await loadMaintenanceRecords(_currentMaintTrailerId);
+
     setTimeout(async function() {
       try {
         var sr = await fetch('/auth/google/status');
         var sd = await sr.json();
-        showToast(sd.connected ? '✓ Synced to Google Drive' : 'Saved locally — connect Google Drive in Settings to enable cloud backup');
+        showToast(sd.connected ? '✓ Synced to Google Drive' : 'Saved locally — connect Drive in Settings');
       } catch(e) {}
     }, 2000);
   } catch(e) {
-    showToast('Error saving record');
+    showToast('Save failed — please try again');
     if (btn) { btn.disabled = false; btn.textContent = 'Save Record'; }
   }
 }

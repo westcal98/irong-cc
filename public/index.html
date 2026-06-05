@@ -453,6 +453,17 @@
 <!-- FAB -->
 <button class="fab" onclick="fabNewBooking()">+</button>
 
+<!-- MAINTENANCE RECORD SLIDE PANEL -->
+<div id="maint-panel-overlay" class="maint-panel-overlay" onclick="closeMaintPanel()"></div>
+<div id="maint-slide-panel" class="maint-slide-panel">
+  <div class="maint-panel-handle"></div>
+  <div class="maint-panel-header">
+    <div class="maint-panel-title" id="maint-panel-title">New Record</div>
+    <button class="maint-panel-close" onclick="closeMaintPanel()">✕</button>
+  </div>
+  <div class="maint-panel-body" id="maint-panel-body"></div>
+</div>
+
 </div><!-- /app -->
 <script src="app.js?v=7.0"></script>
 </body>
