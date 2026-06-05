@@ -491,6 +491,18 @@ export default {
       return handleDeleteMileage(request, env, id);
     }
 
+    if (url.pathname === '/businessinfo/export' && request.method === 'GET') {
+      return handleGetBusinessInfoExport(request, env);
+    }
+
+    if (url.pathname === '/businessinfo' && request.method === 'GET') {
+      return handleGetBusinessInfo(request, env);
+    }
+
+    if (url.pathname === '/businessinfo' && request.method === 'POST') {
+      return handlePostBusinessInfo(request, env);
+    }
+
     return env.ASSETS.fetch(request);
   },
 };
@@ -2988,6 +3000,207 @@ async function handleGetMileageSummary(request, env) {
     });
   } catch (err) {
     console.error('[IronG] Mileage summary error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── BUSINESS INFO HANDLERS ─────────────────────────────
+
+const BUSINESSINFO_DEFAULTS = {
+  legalName: '', dba: '', ein: '', formationDate: '', formationState: 'Oklahoma',
+  llcType: 'Single-member LLC',
+  agentName: 'Northwest Registered Agent', agentAddress: '', agentPhone: '', agentEmail: '',
+  businessPhone: '(405) 393-4161', businessEmail: 'frank@irongequipment.com',
+  website: 'irongequipment.com', mailingAddress: '',
+  operatingLocation: 'Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099',
+  salesTaxPermit: '', filingFrequency: 'Monthly', bankName: '', accountType: '',
+  stripeAccountId: '', insuranceProvider: '', policyNumber: '', coverageType: '',
+  premiumAmount: '', renewalDate: '', agentContactName: '', agentContactPhone: '',
+  notes: '',
+};
+
+async function handleGetBusinessInfo(request, env) {
+  const cors = getCors(request);
+  try {
+    const val = await env.IRONG_KV.get('businessinfo');
+    if (!val) {
+      return new Response(JSON.stringify(BUSINESSINFO_DEFAULTS), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    try {
+      const parsed = JSON.parse(val);
+      return new Response(JSON.stringify({ ...BUSINESSINFO_DEFAULTS, ...parsed }), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    } catch {
+      return new Response(JSON.stringify(BUSINESSINFO_DEFAULTS), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+  } catch (err) {
+    console.error('[IronG] Get businessinfo error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePostBusinessInfo(request, env) {
+  const cors = getCors(request);
+  try {
+    const incoming = await request.json();
+    const existing = await env.IRONG_KV.get('businessinfo');
+    const current = existing ? JSON.parse(existing) : {};
+    const merged = { ...current, ...incoming };
+    await env.IRONG_KV.put('businessinfo', JSON.stringify(merged));
+    syncBusinessInfoToDrive(env, merged).catch(err => console.error('[IronG] businessinfo drive sync error:', err));
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post businessinfo error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function syncBusinessInfoToDrive(env, data) {
+  const token = await getValidAccessToken(env);
+  if (!token) return;
+
+  async function driveGet(path) {
+    const res = await fetch('https://www.googleapis.com/drive/v3/' + path, {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    return res.json();
+  }
+
+  async function findOrCreateFolder(name, parentId) {
+    let q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    if (parentId) q += ` and '${parentId}' in parents`;
+    const search = await driveGet('files?' + new URLSearchParams({ q, fields: 'files(id)', spaces: 'drive' }));
+    if (search.files && search.files.length > 0) return search.files[0].id;
+    const body = { name, mimeType: 'application/vnd.google-apps.folder' };
+    if (parentId) body.parents = [parentId];
+    const res = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const created = await res.json();
+    return created.id;
+  }
+
+  const rootFolderId = await findOrCreateFolder('Iron G Equipment', null);
+  const fileName = 'Business Info — Iron G Equipment Co.json';
+  const fileContent = JSON.stringify(data, null, 2);
+  const fileQ = `name='${fileName.replace(/'/g, "\\'")}' and '${rootFolderId}' in parents and trashed=false`;
+  const fileSearch = await driveGet('files?' + new URLSearchParams({ q: fileQ, fields: 'files(id)' }));
+
+  if (fileSearch.files && fileSearch.files.length > 0) {
+    await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileSearch.files[0].id + '?uploadType=media', {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: fileContent,
+    });
+  } else {
+    const metadata = JSON.stringify({ name: fileName, parents: [rootFolderId], mimeType: 'application/json' });
+    const boundary = 'irong_bi_' + Date.now();
+    const multipart = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + metadata + '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + fileContent + '\r\n--' + boundary + '--';
+    await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'multipart/related; boundary=' + boundary },
+      body: multipart,
+    });
+  }
+}
+
+async function handleGetBusinessInfoExport(request, env) {
+  const cors = getCors(request);
+  try {
+    const val = await env.IRONG_KV.get('businessinfo');
+    const data = val ? { ...BUSINESSINFO_DEFAULTS, ...JSON.parse(val) } : { ...BUSINESSINFO_DEFAULTS };
+    const generated = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const f = (v) => v || '—';
+
+    const text = [
+      'IRON G EQUIPMENT CO. LLC — BUSINESS INFORMATION',
+      'Generated: ' + generated,
+      '',
+      '─────────────────────────────────────────',
+      'BUSINESS IDENTITY',
+      '─────────────────────────────────────────',
+      'Legal Name:          ' + f(data.legalName),
+      'DBA:                 ' + f(data.dba),
+      'EIN:                 ' + f(data.ein),
+      'Formation Date:      ' + f(data.formationDate),
+      'Formation State:     ' + f(data.formationState),
+      'LLC Type:            ' + f(data.llcType),
+      '',
+      '─────────────────────────────────────────',
+      'REGISTERED AGENT',
+      '─────────────────────────────────────────',
+      'Agent Name:          ' + f(data.agentName),
+      'Agent Address:       ' + f(data.agentAddress),
+      'Agent Phone:         ' + f(data.agentPhone),
+      'Agent Email:         ' + f(data.agentEmail),
+      '',
+      '─────────────────────────────────────────',
+      'CONTACT & LOCATION',
+      '─────────────────────────────────────────',
+      'Business Phone:      ' + f(data.businessPhone),
+      'Business Email:      ' + f(data.businessEmail),
+      'Website:             ' + f(data.website),
+      'Mailing Address:     ' + f(data.mailingAddress),
+      'Operating Location:  ' + f(data.operatingLocation),
+      '',
+      '─────────────────────────────────────────',
+      'TAX & BANKING',
+      '─────────────────────────────────────────',
+      'Sales Tax Permit:    ' + f(data.salesTaxPermit),
+      'Filing Frequency:    ' + f(data.filingFrequency),
+      'Bank Name:           ' + f(data.bankName),
+      'Account Type:        ' + f(data.accountType),
+      'Stripe Account ID:   ' + f(data.stripeAccountId),
+      '',
+      '─────────────────────────────────────────',
+      'INSURANCE',
+      '─────────────────────────────────────────',
+      'Insurance Provider:  ' + f(data.insuranceProvider),
+      'Policy Number:       ' + f(data.policyNumber),
+      'Coverage Type:       ' + f(data.coverageType),
+      'Premium Amount:      ' + f(data.premiumAmount),
+      'Renewal Date:        ' + f(data.renewalDate),
+      'Agent Contact Name:  ' + f(data.agentContactName),
+      'Agent Contact Phone: ' + f(data.agentContactPhone),
+      '',
+      '─────────────────────────────────────────',
+      'NOTES',
+      '─────────────────────────────────────────',
+      f(data.notes),
+    ].join('\n');
+
+    return new Response(text, {
+      status: 200,
+      headers: {
+        ...cors,
+        'Content-Type': 'text/plain',
+        'Content-Disposition': 'attachment; filename="iron-g-business-info.txt"',
+      },
+    });
+  } catch (err) {
+    console.error('[IronG] Business info export error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
