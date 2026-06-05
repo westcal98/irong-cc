@@ -456,3 +456,14 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 .expense-toggle-slider:before{content:'';position:absolute;height:20px;width:20px;left:3px;bottom:3px;background:#666;border-radius:50%;transition:.3s;}
 .expense-toggle input:checked + .expense-toggle-slider{background:rgba(255,183,0,.25);border:1px solid var(--primary);}
 .expense-toggle input:checked + .expense-toggle-slider:before{transform:translateX(20px);background:var(--primary);}
+
+/* ── EXPENSES / MILEAGE VIEW TABS ── */
+.expense-view-tabs{display:flex;gap:0;border-bottom:1px solid #1a1a1a;padding:0 16px;}
+.expense-view-tab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--muted);padding:12px 18px;font-size:13px;font-family:'Oswald',sans-serif;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;transition:color .15s,border-color .15s;margin-bottom:-1px;}
+.expense-view-tab.active{color:var(--primary);border-bottom-color:var(--primary);}
+
+/* ── MILEAGE CARDS ── */
+.mileage-card{background:var(--surface);border:1px solid #1a1a1a;border-radius:10px;padding:14px 16px;margin:0 16px 10px;}
+.mileage-miles{font-size:20px;font-weight:700;color:#5ba3d9;white-space:nowrap;}
+.mileage-detail{max-height:0;overflow:hidden;transition:max-height .25s ease;font-size:12px;}
+.mileage-detail.open{max-height:200px;}

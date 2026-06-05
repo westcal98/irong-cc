@@ -41,6 +41,8 @@ var EXPENSE_CATEGORIES = [
   'Office Supplies','Miscellaneous'
 ];
 var EXPENSE_PAYMENT_METHODS = ['Cash','Debit Card','Credit Card','Check','Bank Transfer','Other'];
+var _mileageRecordsCache = [];
+var _currentExpensesView = 'expenses';
 var DEFAULT_SERVICE_TYPES = [
   'Tire Rotation/Replacement','Wheel Bearing Service','Brake Inspection/Replacement',
   'Light Repair/Replacement','Wiring Repair','Coupler Service/Replacement',
@@ -150,7 +152,10 @@ function closeDrawer() { g('drawer').classList.remove('open'); g('drawerOverlay'
 function navTo(id) { closeDrawer(); showPage(id); }
 
 function fabNewBooking() {
-  if (currentPage === 'expenses') { openNewExpense(); return; }
+  if (currentPage === 'expenses') {
+    if (_currentExpensesView === 'mileage') { openNewMileage(); return; }
+    openNewExpense(); return;
+  }
   startNewDraft();
 }
 
@@ -4108,7 +4113,31 @@ async function loadDashboardMaintAlerts() {
 
 async function drawExpensesPage() {
   var page = g('page-expenses'); if (!page) return;
-  page.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">Loading...</div>';
+  page.innerHTML =
+    '<div class="expense-view-tabs">' +
+      '<button class="expense-view-tab' + (_currentExpensesView === 'expenses' ? ' active' : '') + '" id="evt-expenses" onclick="switchExpensesView(\'expenses\')">Expenses</button>' +
+      '<button class="expense-view-tab' + (_currentExpensesView === 'mileage' ? ' active' : '') + '" id="evt-mileage" onclick="switchExpensesView(\'mileage\')">Mileage</button>' +
+    '</div>' +
+    '<div id="expense-view-content"><div style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">Loading...</div></div>';
+  if (_currentExpensesView === 'mileage') {
+    await drawMileageView();
+  } else {
+    await drawExpenseView();
+  }
+}
+
+async function switchExpensesView(view) {
+  _currentExpensesView = view;
+  ['expenses', 'mileage'].forEach(function(v) {
+    var t = g('evt-' + v); if (t) t.classList.toggle('active', v === view);
+  });
+  var content = g('expense-view-content');
+  if (content) content.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">Loading...</div>';
+  if (view === 'mileage') { await drawMileageView(); } else { await drawExpenseView(); }
+}
+
+async function drawExpenseView() {
+  var content = g('expense-view-content'); if (!content) return;
   try {
     var results = await Promise.allSettled([fetch('/expenses/summary'), fetch('/expenses')]);
     var summaryResult = results[0], recordsResult = results[1];
@@ -4122,14 +4151,14 @@ async function drawExpensesPage() {
     }
     _expenseRecordsCache = Array.isArray(records) ? records : [];
 
-    if (!g('page-expenses')) return;
+    if (!g('expense-view-content')) return;
 
     var catOptions = '<option value="">All Categories</option>' +
       EXPENSE_CATEGORIES.map(function(c) {
         return '<option value="' + escHtml(c) + '"' + (_currentExpenseCategoryFilter === c ? ' selected' : '') + '>' + escHtml(c) + '</option>';
       }).join('');
 
-    page.innerHTML =
+    content.innerHTML =
       '<div class="expense-page-header">' +
         '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;">All Expenses</div>' +
         '<button class="btn btn-ghost btn-sm" onclick="exportExpensesCSV()">⬇ Export CSV</button>' +
@@ -4149,8 +4178,8 @@ async function drawExpensesPage() {
 
     renderExpenseCards(_expenseRecordsCache);
   } catch(e) {
-    var pg = g('page-expenses');
-    if (pg) pg.innerHTML = '<div style="color:var(--danger);text-align:center;padding:20px;font-size:13px;">Failed to load expenses.</div>';
+    var c2 = g('expense-view-content');
+    if (c2) c2.innerHTML = '<div style="color:var(--danger);text-align:center;padding:20px;font-size:13px;">Failed to load expenses.</div>';
   }
 }
 
@@ -4518,5 +4547,234 @@ async function saveExpenseRecord() {
   } catch(e) {
     showToast('Save failed — please try again');
     if (btn) { btn.disabled = false; btn.textContent = 'Save Expense'; }
+  }
+}
+
+// ── MILEAGE LOG ────────────────────────────────────────
+
+var IRS_RATE = 0.70;
+
+async function drawMileageView() {
+  var content = g('expense-view-content'); if (!content) return;
+  try {
+    var results = await Promise.allSettled([fetch('/mileage/summary'), fetch('/mileage')]);
+    var summary = {}, records = [];
+    if (results[0].status === 'fulfilled' && results[0].value.ok) {
+      try { summary = await results[0].value.json(); } catch(e) {}
+    }
+    if (results[1].status === 'fulfilled' && results[1].value.ok) {
+      try { records = await results[1].value.json(); } catch(e) {}
+    }
+    _mileageRecordsCache = Array.isArray(records) ? records : [];
+
+    if (!g('expense-view-content')) return;
+
+    var ytdMiles = parseFloat(summary.totalMiles || summary.totalMilesYtd || 0);
+    var ytdDed = parseFloat(summary.totalDeduction || summary.totalDeductionYtd || (ytdMiles * IRS_RATE));
+    var monMiles = parseFloat(summary.currentMonthMiles || summary.monthMiles || 0);
+
+    content.innerHTML =
+      '<div class="expense-page-header">' +
+        '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;">Mileage Log</div>' +
+        '<button class="btn btn-ghost btn-sm" onclick="exportMileageCSV()">⬇ Export CSV</button>' +
+      '</div>' +
+      '<div class="expense-summary-pills">' +
+        '<div class="expense-pill"><div class="expense-pill-label">Miles This Year</div><div class="expense-pill-value" id="mil-pill-miles">' + ytdMiles.toFixed(1) + ' mi</div></div>' +
+        '<div class="expense-pill"><div class="expense-pill-label">Deduction YTD</div><div class="expense-pill-value" id="mil-pill-ded">$' + ytdDed.toFixed(2) + '</div></div>' +
+        '<div class="expense-pill"><div class="expense-pill-label">This Month</div><div class="expense-pill-value" id="mil-pill-month">' + monMiles.toFixed(1) + ' mi</div></div>' +
+      '</div>' +
+      '<div id="mileage-records-body"></div>';
+
+    renderMileageCards(_mileageRecordsCache);
+  } catch(e) {
+    var c2 = g('expense-view-content');
+    if (c2) c2.innerHTML = '<div style="color:var(--danger);text-align:center;padding:20px;font-size:13px;">Failed to load mileage log.</div>';
+  }
+}
+
+function renderMileageCards(records) {
+  var container = g('mileage-records-body'); if (!container) return;
+  var sorted = records.slice().sort(function(a, b) { return (b.date || '').localeCompare(a.date || ''); });
+  if (!sorted.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No trips logged yet. Tap + Add Trip to start tracking mileage.</div>';
+    return;
+  }
+  var h = '';
+  sorted.forEach(function(r) {
+    var miles = parseFloat(r.miles) || 0;
+    var deduction = miles * IRS_RATE;
+    h += '<div class="mileage-card" id="mlc-' + escHtml(String(r.id)) + '">' +
+      '<div onclick="toggleMileageDetail(\'' + escHtml(String(r.id)) + '\')" style="cursor:pointer;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:12px;color:var(--muted);font-family:\'Oswald\',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">' + escHtml(fmtDateLong(r.date)) + '</div>' +
+            '<div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escHtml(r.purpose || '—') + '</div>' +
+          '</div>' +
+          '<div style="text-align:right;flex-shrink:0;">' +
+            '<div class="mileage-miles">' + miles.toFixed(1) + ' mi</div>' +
+            '<div style="font-size:12px;color:var(--muted);margin-top:2px;">$' + deduction.toFixed(2) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div id="mld-' + escHtml(String(r.id)) + '" class="mileage-detail"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;">' +
+        '<button class="btn btn-danger btn-sm" onclick="deleteMileageRecord(\'' + escHtml(String(r.id)) + '\')">Delete</button>' +
+      '</div>' +
+    '</div>';
+  });
+  container.innerHTML = h;
+}
+
+function toggleMileageDetail(id) {
+  var el = g('mld-' + id); if (!el) return;
+  if (el.classList.contains('open')) { el.classList.remove('open'); return; }
+  var r = null;
+  for (var i = 0; i < _mileageRecordsCache.length; i++) { if (String(_mileageRecordsCache[i].id) === String(id)) { r = _mileageRecordsCache[i]; break; } }
+  if (!r) return;
+  el.innerHTML = crow('Notes', r.notes) + crow('Logged At', r.createdAt ? new Date(r.createdAt).toLocaleString() : null);
+  el.classList.add('open');
+}
+
+async function deleteMileageRecord(id) {
+  if (!confirm('Delete this trip? This cannot be undone.')) return;
+  try {
+    var res = await fetch('/mileage/' + id, {method: 'DELETE'});
+    if (!res.ok) throw new Error('delete failed');
+    _mileageRecordsCache = _mileageRecordsCache.filter(function(r) { return String(r.id) !== String(id); });
+    var container = g('mileage-records-body');
+    if (container) renderMileageCards(_mileageRecordsCache);
+    refreshMileageSummaryPills();
+    showToast('Trip deleted');
+  } catch(e) { showToast('Delete failed'); }
+}
+
+async function refreshMileageSummaryPills() {
+  try {
+    var res = await fetch('/mileage/summary');
+    if (!res.ok) return;
+    var summary = await res.json();
+    var ytdMiles = parseFloat(summary.totalMiles || summary.totalMilesYtd || 0);
+    var ytdDed = parseFloat(summary.totalDeduction || summary.totalDeductionYtd || (ytdMiles * IRS_RATE));
+    var monMiles = parseFloat(summary.currentMonthMiles || summary.monthMiles || 0);
+    var mEl = g('mil-pill-miles'); if (mEl) mEl.textContent = ytdMiles.toFixed(1) + ' mi';
+    var dEl = g('mil-pill-ded'); if (dEl) dEl.textContent = '$' + ytdDed.toFixed(2);
+    var mnEl = g('mil-pill-month'); if (mnEl) mnEl.textContent = monMiles.toFixed(1) + ' mi';
+  } catch(e) {}
+}
+
+function exportMileageCSV() {
+  if (!_mileageRecordsCache.length) { showToast('No trips to export'); return; }
+  var sorted = _mileageRecordsCache.slice().sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+  var rows = [['Date', 'Purpose', 'Miles', 'Deduction ($' + IRS_RATE.toFixed(2) + '/mile)', 'Notes']];
+  var totalMiles = 0, totalDed = 0;
+  sorted.forEach(function(r) {
+    var miles = parseFloat(r.miles) || 0;
+    var ded = miles * IRS_RATE;
+    totalMiles += miles; totalDed += ded;
+    rows.push([r.date || '', r.purpose || '', miles.toFixed(1), ded.toFixed(2), r.notes || '']);
+  });
+  rows.push(['', 'TOTAL', totalMiles.toFixed(1), totalDed.toFixed(2), '']);
+  var csv = rows.map(function(row) {
+    return row.map(function(cell) {
+      var s = String(cell);
+      if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1) { s = '"' + s.replace(/"/g, '""') + '"'; }
+      return s;
+    }).join(',');
+  }).join('\r\n');
+  var year = new Date().getFullYear();
+  var blob = new Blob([csv], {type: 'text/csv'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'iron-g-mileage-' + year + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+}
+
+// ── MILEAGE FORM ───────────────────────────────────────
+
+function openNewMileage() {
+  var today = new Date().toISOString().slice(0, 10);
+  var html =
+    '<div class="fg"><label class="fl">Date *</label>' +
+      '<input class="fi" id="mf-date" type="date" value="' + today + '">' +
+    '</div>' +
+    '<div class="fg"><label class="fl">Purpose *</label>' +
+      '<input class="fi" id="mf-purpose" type="text" placeholder="e.g. Trailer pickup from Custom Trailer Sales">' +
+      '<div class="maint-field-error" id="mf-err-purpose">Purpose is required</div>' +
+    '</div>' +
+    '<div class="fg"><label class="fl">Miles *</label>' +
+      '<input class="fi" id="mf-miles" type="number" min="0.1" step="0.1" placeholder="0.0" oninput="_updateMileageDeductionPreview()">' +
+      '<div class="maint-field-error" id="mf-err-miles">Miles is required</div>' +
+      '<div id="mf-ded-preview" style="font-size:12px;color:var(--muted);margin-top:6px;">IRS deduction: — (enter miles above)</div>' +
+    '</div>' +
+    '<div class="fg"><label class="fl">Notes</label>' +
+      '<textarea class="fi form-textarea" id="mf-notes" rows="2" placeholder="Optional"></textarea>' +
+    '</div>' +
+    '<button class="btn btn-primary" id="mileage-save-btn" onclick="saveMileageRecord()" style="width:100%;padding:14px;font-size:14px;letter-spacing:2px;margin-top:8px;" type="button">Log Trip</button>';
+
+  var titleEl = g('expense-panel-title');
+  if (titleEl) titleEl.textContent = 'Log Trip';
+  var panelBody = g('expense-panel-body');
+  if (panelBody) panelBody.innerHTML = html;
+  openExpensePanel();
+}
+
+function _updateMileageDeductionPreview() {
+  var milesEl = g('mf-miles');
+  var preview = g('mf-ded-preview');
+  if (!milesEl || !preview) return;
+  var miles = parseFloat(milesEl.value);
+  if (isNaN(miles) || miles <= 0) {
+    preview.textContent = 'IRS deduction: — (enter miles above)';
+  } else {
+    var ded = miles * IRS_RATE;
+    preview.textContent = 'IRS deduction: $' + ded.toFixed(2) + ' (' + miles.toFixed(1) + ' miles × $' + IRS_RATE.toFixed(2) + '/mile)';
+  }
+}
+
+function _clearMileageErrors() {
+  ['mf-err-purpose', 'mf-err-miles'].forEach(function(id) {
+    var el = g(id); if (el) el.classList.remove('vis');
+  });
+}
+
+async function saveMileageRecord() {
+  _clearMileageErrors();
+  var dateVal = g('mf-date') ? g('mf-date').value : '';
+  var purpose = g('mf-purpose') ? g('mf-purpose').value.trim() : '';
+  var milesEl = g('mf-miles');
+  var miles = milesEl ? parseFloat(milesEl.value) : NaN;
+
+  var valid = true;
+  if (!purpose) { var e1 = g('mf-err-purpose'); if (e1) e1.classList.add('vis'); valid = false; }
+  if (!milesEl || milesEl.value === '' || isNaN(miles) || miles <= 0) { var e2 = g('mf-err-miles'); if (e2) e2.classList.add('vis'); valid = false; }
+  if (!valid) return;
+
+  var now = Date.now();
+  var record = {
+    id: now,
+    date: dateVal || new Date().toISOString().slice(0, 10),
+    purpose: purpose,
+    miles: miles,
+    notes: g('mf-notes') ? g('mf-notes').value.trim() : '',
+    createdAt: now
+  };
+
+  var btn = g('mileage-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  try {
+    var res = await fetch('/mileage', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(record)});
+    if (!res.ok) throw new Error('save failed');
+    closeExpensePanel();
+    var deduction = miles * IRS_RATE;
+    showToast('Trip logged — $' + deduction.toFixed(2) + ' deduction added');
+    var listRes = await fetch('/mileage');
+    if (listRes.ok) { try { _mileageRecordsCache = await listRes.json(); } catch(ex) {} }
+    var container = g('mileage-records-body');
+    if (container) renderMileageCards(_mileageRecordsCache);
+    refreshMileageSummaryPills();
+  } catch(e) {
+    showToast('Save failed — please try again');
+    if (btn) { btn.disabled = false; btn.textContent = 'Log Trip'; }
   }
 }

@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=6.0">
+<link rel="stylesheet" href="styles.css?v=6.2">
 </head>
 <body>
 <div class="app">
@@ -41,6 +41,7 @@
     <div class="drawer-item" id="dnav-active-rentals" onclick="navTo('active-rentals')"><span class="drawer-icon">📋</span>Bookings</div>
     <div class="drawer-item" id="dnav-fleet" onclick="navTo('fleet')"><span class="drawer-icon">🚛</span>Fleet</div>
     <div class="drawer-item" id="dnav-maintenance" onclick="navTo('maintenance')"><span class="drawer-icon">🔧</span>Maintenance</div>
+    <div class="drawer-item" id="dnav-expenses" onclick="navTo('expenses')"><span class="drawer-icon">💰</span>Expenses</div>
     <div class="drawer-item" id="dnav-docs" onclick="navTo('docs')"><span class="drawer-icon">📄</span>Docs</div>
     <div class="drawer-item" id="dnav-messaging" onclick="navTo('messaging')"><span class="drawer-icon">✉️</span>Messaging</div>
     <div class="drawer-item" id="dnav-notifications" onclick="navTo('notifications')"><span class="drawer-icon">🔔</span>Notifications<span class="drawer-notif-badge" id="drawerNotifBadge" style="display:none">0</span></div>
@@ -320,6 +321,9 @@
     <div id="maint-record-form-body"></div>
   </div>
 
+  <!-- EXPENSES -->
+  <div class="page" id="page-expenses"></div>
+
   <!-- DOCS -->
   <div class="page" id="page-docs">
     <div id="docsBody"></div>
@@ -461,7 +465,18 @@
   <div class="maint-panel-body" id="maint-panel-body"></div>
 </div>
 
+<!-- EXPENSE RECORD SLIDE PANEL -->
+<div id="expense-panel-overlay" class="expense-panel-overlay" onclick="closeExpensePanel()"></div>
+<div id="expense-slide-panel" class="expense-slide-panel">
+  <div class="expense-panel-handle"></div>
+  <div class="expense-panel-header">
+    <div class="expense-panel-title" id="expense-panel-title">New Expense</div>
+    <button class="expense-panel-close" onclick="closeExpensePanel()">✕</button>
+  </div>
+  <div class="expense-panel-body" id="expense-panel-body"></div>
+</div>
+
 </div><!-- /app -->
-<script src="app.js?v=7.0"></script>
+<script src="app.js?v=7.2"></script>
 </body>
 </html>
