@@ -2651,7 +2651,17 @@ async function initApp() {
     setTimeout(function(){ navTo('settings'); }, 300);
   } else if (hashStr.includes('auth=error')) {
     window.history.replaceState({}, '', '/');
-    showToast('Google Drive connection failed — try again');
+    showToast('Google Drive connection failed — please try again');
+    setTimeout(function(){ navTo('settings'); }, 300);
+  }
+  var authParam = new URLSearchParams(window.location.search).get('auth');
+  if (authParam === 'success' && !hashStr.includes('auth=')) {
+    window.history.replaceState({}, '', '/');
+    showToast('✓ Google Drive connected');
+    setTimeout(function(){ navTo('settings'); }, 300);
+  } else if (authParam === 'error' && !hashStr.includes('auth=')) {
+    window.history.replaceState({}, '', '/');
+    showToast('Google Drive connection failed — please try again');
     setTimeout(function(){ navTo('settings'); }, 300);
   }
 
@@ -3461,6 +3471,10 @@ async function openMaintenanceRecordForm(tid, record) {
       '<textarea class="fi form-textarea" id="mf-notes" rows="3">' + escHtml(r.notes || '') + '</textarea>' +
     '</div>' +
 
+    '<div class="fg"><label class="fl">Rental Count at Service</label>' +
+      '<input class="fi" id="mf-rental-count" type="number" min="0" value="' + escHtml(r.rentalCountAtService != null ? String(r.rentalCountAtService) : '') + '" placeholder="How many rentals on this trailer so far">' +
+    '</div>' +
+
     '<div class="fg"><label class="fl">Receipt Scanner</label>' +
       '<input type="file" id="mf-receipt-input" accept="image/*" capture="camera" style="display:none;" onchange="scanReceiptImage(this)">' +
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
@@ -3559,11 +3573,21 @@ async function renderServiceTypeManager() {
   var types = await getServiceTypes();
   var h = '<div class="stype-manage-panel"><div style="font-family:\'Oswald\',sans-serif;font-size:10px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Manage Service Types</div>';
   types.forEach(function(t) {
-    h += '<div class="stype-item"><span style="font-size:13px;color:var(--text);">' + escHtml(t) + '</span>' +
-      (t !== 'Custom' ? '<button class="btn btn-ghost btn-sm" onclick="removeServiceType(\'' + escHtml(t).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\')" style="padding:2px 6px;font-size:10px;">✕</button>' : '<span style="font-size:10px;color:var(--muted);">required</span>') +
-    '</div>';
+    var isBuiltIn = DEFAULT_SERVICE_TYPES.indexOf(t) >= 0;
+    h += '<div class="stype-item"><span style="font-size:13px;color:var(--text);">' + escHtml(t) + '</span>';
+    if (isBuiltIn) {
+      h += '<span style="font-size:10px;color:var(--muted);">built-in</span>';
+    } else {
+      h += '<button class="btn btn-ghost btn-sm" onclick="removeServiceType(\'' + escHtml(t).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\')" style="padding:2px 6px;font-size:10px;">✕</button>';
+    }
+    h += '</div>';
   });
-  h += '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;"><input class="fi" id="new-stype-input" type="text" placeholder="New service type" style="flex:1;"><button class="btn btn-primary btn-sm" onclick="addServiceType()">Add</button></div></div>';
+  h += '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;">' +
+    '<input class="fi" id="new-stype-input" type="text" placeholder="Add new service type..." style="flex:1;">' +
+    '<button class="btn btn-primary btn-sm" onclick="addServiceType()">Add</button>' +
+  '</div>' +
+  '<button class="btn btn-ghost btn-sm" onclick="openManageServiceTypes()" style="width:100%;margin-top:8px;">Done</button>' +
+  '</div>';
   area.innerHTML = h;
 }
 
@@ -3585,7 +3609,7 @@ async function addServiceType() {
 }
 
 async function removeServiceType(name) {
-  if (name === 'Custom') return;
+  if (DEFAULT_SERVICE_TYPES.indexOf(name) >= 0) return;
   var types = await getServiceTypes();
   types = types.filter(function(t){ return t !== name; });
   await saveServiceTypesToIDB(types);
@@ -3703,6 +3727,7 @@ async function saveMaintenanceRecord() {
     performedBy: _maintPerformedBy,
     nextServiceDue: g('mf-next-due') ? g('mf-next-due').value : '',
     notes: g('mf-notes') ? g('mf-notes').value.trim() : '',
+    rentalCountAtService: (function(){ var el = g('mf-rental-count'); return (el && el.value !== '') ? parseInt(el.value, 10) : null; })(),
     receiptImage: _pendingReceiptImage || existingImage || null,
     createdAt: _editingMaintenanceRecord ? (_editingMaintenanceRecord.createdAt || now) : now
   };
@@ -3757,24 +3782,30 @@ async function loadGoogleDriveStatus() {
     if (data.connected) {
       var emailLabel = data.email ? ' — ' + escHtml(data.email) : '';
       area.innerHTML =
-        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">' +
           '<span class="drive-status-badge drive-connected">✓ Connected' + emailLabel + '</span>' +
           '<button class="btn btn-ghost btn-sm" onclick="disconnectGoogleDrive()">Disconnect</button>' +
-        '</div>';
+        '</div>' +
+        '<div style="font-size:12px;color:var(--muted);line-height:1.5;">Maintenance logs sync automatically after each save.</div>';
     } else {
       area.innerHTML =
-        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">' +
           '<span class="drive-status-badge drive-disconnected">Not Connected</span>' +
           '<a href="/auth/google" class="btn btn-primary btn-sm" style="text-decoration:none;">Connect Google Drive</a>' +
-        '</div>';
+        '</div>' +
+        '<div style="font-size:12px;color:var(--muted);line-height:1.5;">Connect to automatically back up maintenance logs to Google Drive.</div>';
     }
   } catch(e) {
-    area.innerHTML = '<div style="color:var(--muted);font-size:13px;">Unable to check status</div>';
+    area.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+        '<span style="font-size:13px;color:var(--muted);">Status unavailable</span>' +
+        '<button class="btn btn-ghost btn-sm" onclick="loadGoogleDriveStatus()">Retry</button>' +
+      '</div>';
   }
 }
 
 async function disconnectGoogleDrive() {
-  if (!confirm('Disconnect Google Drive? Future maintenance records will not sync until reconnected.')) return;
+  if (!confirm('Disconnect Google Drive? Maintenance logs will no longer sync automatically.')) return;
   try {
     var res = await fetch('/auth/google/disconnect', {method:'POST'});
     if (!res.ok) throw new Error('disconnect failed');
