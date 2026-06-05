@@ -18,6 +18,21 @@ var _lastCalcTid = '';
 var _lastAvailTid = '';
 var globalVars = {};
 var _templateCache = {};
+var _trailerNames = {};
+var _maintenanceTrailers = [];
+var _currentMaintTrailerId = null;
+var _editingMaintenanceRecord = null;
+var _maintenanceRecordsCache = {};
+var _serviceTypes = null;
+var _pendingReceiptImage = null;
+var DEFAULT_SERVICE_TYPES = [
+  'Tire Rotation/Replacement','Wheel Bearing Service','Brake Inspection/Replacement',
+  'Light Repair/Replacement','Wiring Repair','Coupler Service/Replacement',
+  'Jack Service/Replacement','Safety Chain Replacement','Winch Service/Repair',
+  'Ramp Repair/Replacement','Frame Repair/Welding','Rust Treatment',
+  'Deck Repair/Replacement','Registration/Inspection','Cleaning/Detail',
+  'GPS Tracker Service','Custom'
+];
 
 function defaultState() {
   return {
@@ -126,7 +141,8 @@ var titles = {
   'active-rentals':'Active Rentals', messages:'Message Templates', agreement:'Rental Agreement',
   pricing:'Pricing Reference', history:'Rental History', settings:'Settings',
   notifications:'Notifications', drafts:'Drafts', 'process-return':'Process Return',
-  messaging:'Messaging', docs:'Documents'
+  messaging:'Messaging', docs:'Documents',
+  maintenance:'Maintenance Log', 'maintenance-record':'Maintenance Record'
 };
 
 function showPage(id, skipPush) {
@@ -143,7 +159,8 @@ function showPage(id, skipPush) {
   var drawerMap = {
     'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals',
     'new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications',
-    'drafts':'dnav-drafts','messaging':'dnav-messaging','docs':'dnav-docs'
+    'drafts':'dnav-drafts','messaging':'dnav-messaging','docs':'dnav-docs',
+    'maintenance':'dnav-maintenance'
   };
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
@@ -155,7 +172,9 @@ function showPage(id, skipPush) {
   if (id === 'process-return') drawProcessReturn(_processReturnId);
   if (id === 'history') drawHistory();
   if (id === 'new-booking') drawAvail();
-  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGlobalVarSettings(); }
+  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGlobalVarSettings(); loadGoogleDriveStatus(); }
+  if (id === 'maintenance') drawMaintenancePage();
+  if (id === 'maintenance-record') { /* form already built before navTo */ }
   if (id === 'messaging') drawMessaging();
   if (id === 'docs') drawDocs();
   if (id === 'messages') drawMessages();
@@ -1367,13 +1386,19 @@ function updateStorageUsage() {
 }
 
 // ── DRAW FUNCTIONS ───────────────────────────────────
-function drawFleet() {
+async function drawFleet() {
+  await loadTrailerNames();
   var fc = g('fleetCards');
   if (fc) {
     var h = '';
     state.fleet.forEach(function(t){
+      var tName = _trailerNames[t.id] || t.name;
       h += '<div class="fleet-card ' + t.status + '">' +
-        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;"><div class="fc-name">' + t.name + '</div><span class="badge b-' + t.status + '">' + (t.status==='available'?'✓ Available':'⚡ Rented') + '</span></div>' +
+        '<div id="fcname-' + t.id + '" class="fc-name-edit-row">' +
+          '<div class="fc-name-display" id="fcname-disp-' + t.id + '">' + escHtml(tName) + '</div>' +
+          '<button class="btn btn-ghost btn-sm" onclick="editTrailerName(\'' + t.id + '\')" style="padding:4px 8px;font-size:11px;">Edit Name</button>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;"><div class="fc-name">' + escHtml(tName) + '</div><span class="badge b-' + t.status + '">' + (t.status==='available'?'✓ Available':'⚡ Rented') + '</span></div>' +
         (t.status==='available'
           ? '<div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="startNewDraft()">+ Book This Trailer</button></div>'
           : '<div class="fc-renter">Rented to: <strong>' + t.renter + '</strong></div><div class="fc-renter">Due: <strong>' + t.returnDate + '</strong></div><div style="margin-top:10px;"><button class="btn btn-success btn-sm" onclick="markRetByTrailer(\'' + t.id + '\')">✓ Mark Returned</button></div>'
@@ -2617,6 +2642,18 @@ async function initApp() {
   try { var gvRes = await fetch('/globalvars'); if (gvRes.ok) globalVars = await gvRes.json(); } catch(e) {}
   fetchNotifications(); setInterval(fetchNotifications, 60000);
   initPushNotifications();
+  // Check OAuth callback in hash
+  var hashStr = window.location.hash || '';
+  if (hashStr.includes('auth=success')) {
+    window.history.replaceState({}, '', '/');
+    showToast('✓ Google Drive connected');
+    setTimeout(function(){ navTo('settings'); }, 300);
+  } else if (hashStr.includes('auth=error')) {
+    window.history.replaceState({}, '', '/');
+    showToast('Google Drive connection failed — try again');
+    setTimeout(function(){ navTo('settings'); }, 300);
+  }
+
   var urlParams = new URLSearchParams(window.location.search);
   var paymentStatus = urlParams.get('payment');
   var paymentBookingId = urlParams.get('bookingId');
@@ -3017,3 +3054,512 @@ async function updateNextAvailableHelper(tid) {
 }
 
 initApp();
+
+// ── TRAILER NAMES ─────────────────────────────────────
+
+async function loadTrailerNames() {
+  try {
+    var res = await fetch('/trailers');
+    if (res.ok) {
+      var arr = await res.json();
+      _maintenanceTrailers = arr;
+      _trailerNames = {};
+      arr.forEach(function(t){ _trailerNames[t.id] = t.name; });
+      return;
+    }
+  } catch(e) {}
+  _maintenanceTrailers = [{id:'utility',name:'Utility Trailer'},{id:'hauler',name:'Car Hauler'}];
+  _trailerNames = {utility:'Utility Trailer',hauler:'Car Hauler'};
+}
+
+function editTrailerName(tid) {
+  var row = g('fcname-' + tid); if (!row) return;
+  var current = (_trailerNames[tid] || '');
+  row.innerHTML =
+    '<input class="fi" id="fcname-inp-' + tid + '" type="text" value="' + escHtml(current) + '" style="flex:1;font-family:\'Oswald\',sans-serif;font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:1px;" placeholder="Trailer name">' +
+    '<button class="btn btn-primary btn-sm" onclick="saveTrailerName(\'' + tid + '\')">Save</button>' +
+    '<button class="btn btn-ghost btn-sm" onclick="cancelTrailerNameEdit(\'' + tid + '\')">Cancel</button>';
+  var inp = g('fcname-inp-' + tid); if (inp) inp.focus();
+}
+
+async function saveTrailerName(tid) {
+  var inp = g('fcname-inp-' + tid); if (!inp) return;
+  var name = inp.value.trim(); if (!name) { showToast('Enter a name'); return; }
+  try {
+    var res = await fetch('/trailers/' + tid + '/name', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name: name})
+    });
+    if (!res.ok) throw new Error('save failed');
+    _trailerNames[tid] = name;
+    var idx = _maintenanceTrailers.findIndex(function(t){ return t.id === tid; });
+    if (idx >= 0) _maintenanceTrailers[idx].name = name;
+    var row = g('fcname-' + tid);
+    if (row) row.innerHTML =
+      '<div class="fc-name-display" id="fcname-disp-' + tid + '">' + escHtml(name) + '</div>' +
+      '<button class="btn btn-ghost btn-sm" onclick="editTrailerName(\'' + tid + '\')" style="padding:4px 8px;font-size:11px;">Edit Name</button>';
+    // Also update fc-name heading below (re-draw is overkill; just update text)
+    var nameEl = row ? row.nextElementSibling : null;
+    if (nameEl) { var fcName = nameEl.querySelector('.fc-name'); if (fcName) fcName.textContent = name; }
+    showToast('Trailer name updated');
+  } catch(e) { showToast('Failed to save name'); }
+}
+
+async function cancelTrailerNameEdit(tid) {
+  var row = g('fcname-' + tid); if (!row) return;
+  var name = _trailerNames[tid] || '';
+  row.innerHTML =
+    '<div class="fc-name-display" id="fcname-disp-' + tid + '">' + escHtml(name) + '</div>' +
+    '<button class="btn btn-ghost btn-sm" onclick="editTrailerName(\'' + tid + '\')" style="padding:4px 8px;font-size:11px;">Edit Name</button>';
+}
+
+// ── MAINTENANCE PAGE ──────────────────────────────────
+
+async function drawMaintenancePage() {
+  var page = g('page-maintenance'); if (!page) return;
+  await loadTrailerNames();
+  if (!_currentMaintTrailerId && _maintenanceTrailers.length) {
+    _currentMaintTrailerId = _maintenanceTrailers[0].id;
+  }
+  page.innerHTML =
+    '<div id="maint-tab-bar" class="maint-tab-bar">' +
+    _maintenanceTrailers.map(function(t){
+      var active = t.id === _currentMaintTrailerId ? ' active' : '';
+      return '<button class="maint-tab' + active + '" onclick="selectMaintTrailer(\'' + t.id + '\')">' + escHtml(t.name) + '</button>';
+    }).join('') +
+    '</div>' +
+    '<div style="display:flex;justify-content:flex-end;margin-bottom:14px;">' +
+      '<button class="btn btn-primary" onclick="openNewMaintenanceRecord()">+ Add Record</button>' +
+    '</div>' +
+    '<div id="maint-records-body"></div>';
+  if (_currentMaintTrailerId) await loadMaintenanceRecords(_currentMaintTrailerId);
+}
+
+async function selectMaintTrailer(tid) {
+  _currentMaintTrailerId = tid;
+  var tabBar = g('maint-tab-bar');
+  if (tabBar) tabBar.innerHTML = _maintenanceTrailers.map(function(t){
+    var active = t.id === tid ? ' active' : '';
+    return '<button class="maint-tab' + active + '" onclick="selectMaintTrailer(\'' + t.id + '\')">' + escHtml(t.name) + '</button>';
+  }).join('');
+  await loadMaintenanceRecords(tid);
+}
+
+async function loadMaintenanceRecords(tid) {
+  var container = g('maint-records-body'); if (!container) return;
+  container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:20px;font-size:13px;">Loading...</div>';
+  try {
+    var res = await fetch('/maintenance/' + tid);
+    if (!res.ok) throw new Error('fetch error');
+    var records = await res.json();
+    _maintenanceRecordsCache[tid] = records;
+    renderMaintenanceRecords(records, tid, container);
+  } catch(e) {
+    container.innerHTML = '<div style="color:var(--danger);text-align:center;padding:20px;font-size:13px;">Failed to load records.</div>';
+  }
+}
+
+function fmtDateLong(dateStr) {
+  if (!dateStr) return '—';
+  var d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
+}
+
+function renderMaintenanceRecords(records, tid, container) {
+  if (!records.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No maintenance records yet. Add your first record.</div>';
+    return;
+  }
+  var today = new Date().toISOString().slice(0,10);
+  var soonDate = new Date(); soonDate.setDate(soonDate.getDate() + 30);
+  var soonStr = soonDate.toISOString().slice(0,10);
+  var h = '';
+  records.forEach(function(r) {
+    var totalCost = parseFloat(r.totalCost) || ((parseFloat(r.laborCost)||0) + (parseFloat(r.partsCost)||0));
+    var nextDueHtml = '';
+    if (r.nextServiceDue) {
+      var cls = r.nextServiceDue < today ? 'maint-next-overdue' : (r.nextServiceDue <= soonStr ? 'maint-next-soon' : 'maint-next-ok');
+      nextDueHtml = '<span class="maint-next-due ' + cls + '">Next service: ' + escHtml(r.nextServiceDue) + '</span>';
+    }
+    var thumbHtml = r.receiptImage ? '<div style="margin-bottom:8px;"><img src="' + escHtml(r.receiptImage) + '" class="receipt-thumb" onclick="viewReceiptFull(\'' + escHtml(r.id) + '\',\'' + tid + '\')" alt="Receipt"></div>' : '';
+    var serviceLabel = r.serviceType === 'Custom' && r.customType ? r.customType : (r.serviceType || '');
+    h += '<div class="maint-record-card" id="mrc-' + r.id + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px;">' +
+        '<div>' +
+          '<div style="font-size:12px;color:var(--muted);font-family:\'Oswald\',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">' + escHtml(fmtDateLong(r.date)) + '</div>' +
+          (serviceLabel ? '<span class="maint-stype-badge">' + escHtml(serviceLabel) + '</span>' : '') +
+        '</div>' +
+        '<div class="maint-cost">$' + totalCost.toFixed(2) + '</div>' +
+      '</div>' +
+      (r.vendor ? '<div style="font-size:13px;color:var(--text);margin-bottom:6px;">' + escHtml(r.vendor) + '</div>' : '') +
+      (nextDueHtml ? '<div style="margin-bottom:8px;">' + nextDueHtml + '</div>' : '') +
+      thumbHtml +
+      '<div id="mrd-' + r.id + '" class="maint-record-detail"></div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;flex-wrap:wrap;">' +
+        '<button class="btn btn-ghost btn-sm" id="mrd-toggle-' + r.id + '" onclick="toggleMaintDetail(\'' + r.id + '\',\'' + tid + '\')">Expand</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="editMaintenanceRecord(\'' + tid + '\',\'' + r.id + '\')">Edit</button>' +
+        '<button class="btn btn-danger btn-sm" onclick="deleteMaintenanceRecord(\'' + tid + '\',\'' + r.id + '\')">Delete</button>' +
+      '</div>' +
+    '</div>';
+  });
+  container.innerHTML = h;
+}
+
+function toggleMaintDetail(id, tid) {
+  var el = g('mrd-' + id); if (!el) return;
+  var btn = g('mrd-toggle-' + id);
+  var open = el.classList.contains('open');
+  if (open) { el.classList.remove('open'); if (btn) btn.textContent = 'Expand'; return; }
+  var records = _maintenanceRecordsCache[tid] || [];
+  var r = null; for (var i = 0; i < records.length; i++) { if (records[i].id === id) { r = records[i]; break; } }
+  if (!r) return;
+  el.innerHTML =
+    crow('Description', r.description) +
+    crow('Parts Used', r.partsUsed) +
+    crow('Performed By', r.performedBy) +
+    crow('Vendor', r.vendor) +
+    crow('Vendor Phone', r.vendorPhone) +
+    crow('Invoice Ref', r.invoiceRef) +
+    crow('Labor Cost', r.laborCost ? '$' + r.laborCost : null) +
+    crow('Parts Cost', r.partsCost ? '$' + r.partsCost : null) +
+    crow('Total Cost', r.totalCost ? '$' + r.totalCost : null) +
+    crow('Next Service Due', r.nextServiceDue) +
+    crow('Rental Count', r.rentalCountAtService) +
+    crow('Notes', r.notes) +
+    crow('Created At', r.createdAt ? new Date(r.createdAt).toLocaleString() : null);
+  el.classList.add('open');
+  if (btn) btn.textContent = 'Collapse';
+}
+
+function crow(label, val) {
+  if (!val) return '';
+  return '<div class="rental-field"><span class="rental-label">' + escHtml(label) + '</span><span class="rental-value" style="text-align:right;max-width:65%;word-break:break-word;">' + escHtml(String(val)) + '</span></div>';
+}
+
+function viewReceiptFull(id, tid) {
+  var records = _maintenanceRecordsCache[tid] || [];
+  var r = null; for (var i = 0; i < records.length; i++) { if (records[i].id === id) { r = records[i]; break; } }
+  if (!r || !r.receiptImage) return;
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.onclick = function(){ document.body.removeChild(overlay); };
+  overlay.innerHTML = '<img src="' + escHtml(r.receiptImage) + '" style="max-width:100%;max-height:90vh;border-radius:4px;">';
+  document.body.appendChild(overlay);
+}
+
+async function editMaintenanceRecord(tid, id) {
+  var records = _maintenanceRecordsCache[tid] || [];
+  var r = null; for (var i = 0; i < records.length; i++) { if (records[i].id === id) { r = records[i]; break; } }
+  if (!r) return;
+  _editingMaintenanceRecord = r;
+  await openMaintenanceRecordForm(tid, r);
+}
+
+async function deleteMaintenanceRecord(tid, id) {
+  if (!confirm('Delete this maintenance record? This cannot be undone.')) return;
+  try {
+    var res = await fetch('/maintenance/' + tid + '/' + id, {method:'DELETE'});
+    if (!res.ok) throw new Error('delete failed');
+    if (_maintenanceRecordsCache[tid]) {
+      _maintenanceRecordsCache[tid] = _maintenanceRecordsCache[tid].filter(function(r){ return r.id !== id; });
+    }
+    var container = g('maint-records-body');
+    if (container) renderMaintenanceRecords(_maintenanceRecordsCache[tid] || [], tid, container);
+    showToast('Record deleted');
+  } catch(e) { showToast('Delete failed'); }
+}
+
+async function openNewMaintenanceRecord() {
+  _editingMaintenanceRecord = null;
+  _pendingReceiptImage = null;
+  await openMaintenanceRecordForm(_currentMaintTrailerId, null);
+}
+
+async function openMaintenanceRecordForm(tid, record) {
+  _editingMaintenanceRecord = record || null;
+  _currentMaintTrailerId = tid;
+  _pendingReceiptImage = null;
+  var types = await getServiceTypes();
+  var today = new Date().toISOString().slice(0,10);
+  var r = record || {};
+  var isEdit = !!record;
+  var trailerName = _trailerNames[tid] || tid;
+  var typeOptions = '<option value="">— Select —</option>' + types.map(function(t){
+    var sel = t === (r.serviceType || '') ? ' selected' : '';
+    return '<option value="' + escHtml(t) + '"' + sel + '>' + escHtml(t) + '</option>';
+  }).join('');
+  var showCustom = (r.serviceType === 'Custom') ? '' : 'none';
+  var laborVal = r.laborCost != null ? String(r.laborCost) : '0';
+  var partsVal = r.partsCost != null ? String(r.partsCost) : '0';
+  var totalVal = r.totalCost != null ? String(r.totalCost) : String((parseFloat(laborVal)||0)+(parseFloat(partsVal)||0));
+  var thumbHtml = r.receiptImage
+    ? '<div id="receipt-thumb-wrap" style="margin-top:8px;display:flex;align-items:center;gap:8px;"><img id="receipt-thumb-preview" src="' + escHtml(r.receiptImage) + '" class="receipt-thumb"><button class="btn btn-ghost btn-sm" id="receipt-remove-btn" onclick="removeReceiptImage()" type="button">Remove</button></div>'
+    : '<div id="receipt-thumb-wrap" style="margin-top:8px;display:none;"><img id="receipt-thumb-preview" src="" class="receipt-thumb" style="display:none;"><button class="btn btn-ghost btn-sm" id="receipt-remove-btn" onclick="removeReceiptImage()" type="button">Remove</button></div>';
+  var formHtml =
+    '<div class="card">' +
+    '<div class="card-header"><div class="card-title">' + (isEdit ? 'Edit Record' : 'New Record') + ' — ' + escHtml(trailerName) + '</div></div>' +
+    '<div class="card-body">' +
+    '<div class="fg"><label class="fl">Date *</label><input class="fi" id="mf-date" type="date" value="' + escHtml(r.date || today) + '"></div>' +
+    '<div class="fg"><label class="fl">Service Type *</label>' +
+      '<div style="display:flex;gap:8px;align-items:center;">' +
+        '<select class="form-select" id="mf-service-type" onchange="onServiceTypeChange()" style="flex:1;">' + typeOptions + '</select>' +
+        '<button class="btn btn-ghost btn-sm" onclick="openManageServiceTypes()" type="button">Manage List</button>' +
+      '</div>' +
+    '</div>' +
+    '<div id="mf-custom-type-row" class="fg" style="display:' + showCustom + ';"><label class="fl">Custom Type *</label><input class="fi" id="mf-custom-type" type="text" value="' + escHtml(r.customType || '') + '" placeholder="Describe service type"></div>' +
+    '<div id="stype-manage-area" style="display:none;"></div>' +
+    '<div class="fg"><label class="fl">Description *</label><textarea class="fi form-textarea" id="mf-description" rows="3" placeholder="What was done?">' + escHtml(r.description || '') + '</textarea></div>' +
+    '<div class="fg"><label class="fl">Parts Used</label><input class="fi" id="mf-parts-used" type="text" value="' + escHtml(r.partsUsed || '') + '" placeholder="Part numbers, descriptions..."></div>' +
+    '<div class="fg"><label class="fl">Performed By *</label><input class="fi" id="mf-performed-by" type="text" value="' + escHtml(r.performedBy || '') + '" placeholder="Self or vendor name"></div>' +
+    '<div class="fr"><div class="fg"><label class="fl">Vendor Name</label><input class="fi" id="mf-vendor" type="text" value="' + escHtml(r.vendor || '') + '"></div><div class="fg"><label class="fl">Vendor Phone</label><input class="fi" id="mf-vendor-phone" type="tel" value="' + escHtml(r.vendorPhone || '') + '"></div></div>' +
+    '<div class="fg"><label class="fl">Invoice/Receipt Ref</label><input class="fi" id="mf-invoice-ref" type="text" value="' + escHtml(r.invoiceRef || '') + '"></div>' +
+    '<div class="fr"><div class="fg"><label class="fl">Labor Cost ($)</label><input class="fi" id="mf-labor" type="number" min="0" step="0.01" value="' + escHtml(laborVal) + '" oninput="calcMaintenanceTotalCost()"></div><div class="fg"><label class="fl">Parts Cost ($)</label><input class="fi" id="mf-parts" type="number" min="0" step="0.01" value="' + escHtml(partsVal) + '" oninput="calcMaintenanceTotalCost()"></div></div>' +
+    '<div class="fg"><label class="fl">Total Cost ($)</label><input class="fi" id="mf-total" type="number" min="0" step="0.01" value="' + escHtml(totalVal) + '"></div>' +
+    '<div class="fg"><label class="fl">Next Service Due</label><input class="fi" id="mf-next-due" type="date" value="' + escHtml(r.nextServiceDue || '') + '"></div>' +
+    '<div class="fg"><label class="fl">Rental Count at Service</label><input class="fi" id="mf-rental-count" type="number" min="0" value="' + escHtml(r.rentalCountAtService != null ? String(r.rentalCountAtService) : '') + '" placeholder="How many rentals on this trailer so far"></div>' +
+    '<div class="fg"><label class="fl">Notes</label><textarea class="fi form-textarea" id="mf-notes" rows="3">' + escHtml(r.notes || '') + '</textarea></div>' +
+    '<div class="fg"><label class="fl">Receipt Image</label>' +
+      '<input type="file" id="mf-receipt-input" accept="image/*" capture="camera" style="display:none;" onchange="scanReceiptImage(this)">' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+        '<button class="btn btn-ghost btn-sm" onclick="g(\'mf-receipt-input\').click()" type="button">📷 Scan Receipt</button>' +
+        '<span id="scan-receipt-status" style="font-size:12px;color:var(--muted);display:none;"></span>' +
+      '</div>' +
+      thumbHtml +
+    '</div>' +
+    '</div></div>' +
+    '<div style="display:flex;gap:8px;margin-top:14px;">' +
+      '<button class="btn btn-primary" id="maint-save-btn" onclick="saveMaintenanceRecord()" style="flex:1;">Save Record</button>' +
+      '<button class="btn btn-ghost" onclick="showPage(\'maintenance\')" style="flex:1;">Cancel</button>' +
+    '</div>';
+  var formBody = g('maint-record-form-body');
+  if (formBody) formBody.innerHTML = formHtml;
+  showPage('maintenance-record');
+}
+
+function onServiceTypeChange() {
+  var sel = g('mf-service-type'); if (!sel) return;
+  var row = g('mf-custom-type-row');
+  if (row) row.style.display = sel.value === 'Custom' ? '' : 'none';
+}
+
+function calcMaintenanceTotalCost() {
+  var labor = parseFloat(g('mf-labor') ? g('mf-labor').value : 0) || 0;
+  var parts = parseFloat(g('mf-parts') ? g('mf-parts').value : 0) || 0;
+  var tot = g('mf-total');
+  if (tot) tot.value = (labor + parts).toFixed(2);
+}
+
+// ── SERVICE TYPE MANAGEMENT ───────────────────────────
+
+async function getServiceTypes() {
+  if (_serviceTypes !== null) return _serviceTypes;
+  var stored = await idbGet('maintenance:serviceTypes').catch(function(){ return null; });
+  _serviceTypes = (Array.isArray(stored) && stored.length) ? stored : DEFAULT_SERVICE_TYPES.slice();
+  return _serviceTypes;
+}
+
+async function saveServiceTypesToIDB(types) {
+  _serviceTypes = types;
+  await idbPut('maintenance:serviceTypes', types).catch(function(){});
+}
+
+function openManageServiceTypes() {
+  var area = g('stype-manage-area'); if (!area) return;
+  if (area.style.display !== 'none') { area.style.display = 'none'; return; }
+  area.style.display = 'block';
+  renderServiceTypeManager();
+}
+
+async function renderServiceTypeManager() {
+  var area = g('stype-manage-area'); if (!area) return;
+  var types = await getServiceTypes();
+  var h = '<div class="stype-manage-panel"><div style="font-family:\'Oswald\',sans-serif;font-size:10px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Manage Service Types</div>';
+  types.forEach(function(t) {
+    h += '<div class="stype-item"><span style="font-size:13px;color:var(--text);">' + escHtml(t) + '</span>' +
+      (t !== 'Custom' ? '<button class="btn btn-ghost btn-sm" onclick="removeServiceType(\'' + escHtml(t).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\')" style="padding:2px 6px;font-size:10px;">✕</button>' : '<span style="font-size:10px;color:var(--muted);">required</span>') +
+    '</div>';
+  });
+  h += '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;"><input class="fi" id="new-stype-input" type="text" placeholder="New service type" style="flex:1;"><button class="btn btn-primary btn-sm" onclick="addServiceType()">Add</button></div></div>';
+  area.innerHTML = h;
+}
+
+async function addServiceType() {
+  var inp = g('new-stype-input'); if (!inp) return;
+  var val = inp.value.trim(); if (!val) return;
+  var types = await getServiceTypes();
+  if (types.indexOf(val) >= 0) { showToast('Already exists'); return; }
+  var customIdx = types.indexOf('Custom');
+  if (customIdx >= 0) types.splice(customIdx, 0, val); else types.push(val);
+  await saveServiceTypesToIDB(types);
+  var sel = g('mf-service-type');
+  if (sel) {
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">— Select —</option>' + types.map(function(t){ return '<option value="' + escHtml(t) + '"' + (t === cur ? ' selected' : '') + '>' + escHtml(t) + '</option>'; }).join('');
+  }
+  inp.value = '';
+  renderServiceTypeManager();
+}
+
+async function removeServiceType(name) {
+  if (name === 'Custom') return;
+  var types = await getServiceTypes();
+  types = types.filter(function(t){ return t !== name; });
+  await saveServiceTypesToIDB(types);
+  var sel = g('mf-service-type');
+  if (sel) {
+    var cur = sel.value === name ? '' : sel.value;
+    sel.innerHTML = '<option value="">— Select —</option>' + types.map(function(t){ return '<option value="' + escHtml(t) + '"' + (t === cur ? ' selected' : '') + '>' + escHtml(t) + '</option>'; }).join('');
+  }
+  renderServiceTypeManager();
+}
+
+// ── RECEIPT SCANNER ───────────────────────────────────
+
+function scanReceiptImage(input) {
+  var file = input.files[0]; if (!file) return;
+  var statusEl = g('scan-receipt-status');
+  if (statusEl) { statusEl.textContent = 'Reading receipt...'; statusEl.style.color = 'var(--muted)'; statusEl.style.display = ''; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var dataUrl = e.target.result;
+    var base64 = dataUrl.split(',')[1];
+    var mimeType = file.type || 'image/jpeg';
+    _pendingReceiptImage = dataUrl;
+    var wrap = g('receipt-thumb-wrap');
+    var thumb = g('receipt-thumb-preview');
+    var removeBtn = g('receipt-remove-btn');
+    if (thumb) { thumb.src = dataUrl; thumb.style.display = ''; }
+    if (wrap) wrap.style.display = 'flex';
+    if (removeBtn) removeBtn.style.display = '';
+    fetch('/maintenance/scan-receipt', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({imageBase64: base64, mimeType: mimeType})
+    }).then(function(res) {
+      if (!res.ok) throw new Error('scan failed');
+      return res.json();
+    }).then(function(data) {
+      function setField(id, val) { var el = g(id); if (el && val != null && String(val).trim()) el.value = val; }
+      setField('mf-vendor', data.vendorName);
+      setField('mf-vendor-phone', data.vendorPhone);
+      setField('mf-invoice-ref', data.invoiceRef);
+      if (data.laborCost != null) { setField('mf-labor', data.laborCost); calcMaintenanceTotalCost(); }
+      if (data.partsCost != null) { setField('mf-parts', data.partsCost); calcMaintenanceTotalCost(); }
+      if (data.totalCost != null) setField('mf-total', data.totalCost);
+      var dateEl = g('mf-date'); if (dateEl && !dateEl.value && data.date) dateEl.value = data.date;
+      if (data.notes) { var notesEl = g('mf-notes'); if (notesEl) notesEl.value = (notesEl.value ? notesEl.value + '\n' : '') + data.notes; }
+      if (statusEl) statusEl.style.display = 'none';
+      showToast('✓ Receipt scanned — review and confirm fields');
+    }).catch(function() {
+      if (statusEl) { statusEl.textContent = 'Could not read receipt — please enter manually'; statusEl.style.color = 'var(--danger)'; }
+    });
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeReceiptImage() {
+  _pendingReceiptImage = null;
+  var thumb = g('receipt-thumb-preview'); if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
+  var wrap = g('receipt-thumb-wrap'); if (wrap) wrap.style.display = 'none';
+  var inp = g('mf-receipt-input'); if (inp) inp.value = '';
+  if (_editingMaintenanceRecord) _editingMaintenanceRecord._clearImage = true;
+}
+
+// ── SAVE MAINTENANCE RECORD ───────────────────────────
+
+async function saveMaintenanceRecord() {
+  var tid = _currentMaintTrailerId; if (!tid) return;
+  var dateVal = g('mf-date') ? g('mf-date').value : '';
+  var serviceType = g('mf-service-type') ? g('mf-service-type').value : '';
+  var customType = g('mf-custom-type') ? g('mf-custom-type').value.trim() : '';
+  var description = g('mf-description') ? g('mf-description').value.trim() : '';
+  var performedBy = g('mf-performed-by') ? g('mf-performed-by').value.trim() : '';
+  if (!dateVal) { showToast('Date is required'); return; }
+  if (!serviceType) { showToast('Service Type is required'); return; }
+  if (serviceType === 'Custom' && !customType) { showToast('Custom type description is required'); return; }
+  if (!description) { showToast('Description is required'); return; }
+  if (!performedBy) { showToast('Performed By is required'); return; }
+  var laborCost = parseFloat(g('mf-labor') ? g('mf-labor').value : 0) || 0;
+  var partsCost = parseFloat(g('mf-parts') ? g('mf-parts').value : 0) || 0;
+  var totalEl = g('mf-total');
+  var totalCost = totalEl ? (parseFloat(totalEl.value) || (laborCost + partsCost)) : (laborCost + partsCost);
+  var existingImage = _editingMaintenanceRecord && !(_editingMaintenanceRecord._clearImage) ? _editingMaintenanceRecord.receiptImage : null;
+  var record = {
+    date: dateVal, serviceType: serviceType,
+    customType: serviceType === 'Custom' ? customType : '',
+    description: description,
+    partsUsed: g('mf-parts-used') ? g('mf-parts-used').value.trim() : '',
+    performedBy: performedBy,
+    vendor: g('mf-vendor') ? g('mf-vendor').value.trim() : '',
+    vendorPhone: g('mf-vendor-phone') ? g('mf-vendor-phone').value.trim() : '',
+    invoiceRef: g('mf-invoice-ref') ? g('mf-invoice-ref').value.trim() : '',
+    laborCost: laborCost, partsCost: partsCost, totalCost: totalCost,
+    nextServiceDue: g('mf-next-due') ? g('mf-next-due').value : '',
+    rentalCountAtService: g('mf-rental-count') ? g('mf-rental-count').value : '',
+    notes: g('mf-notes') ? g('mf-notes').value.trim() : '',
+    receiptImage: _pendingReceiptImage || existingImage || null
+  };
+  var btn = g('maint-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  try {
+    var url = _editingMaintenanceRecord
+      ? '/maintenance/' + tid + '/' + _editingMaintenanceRecord.id
+      : '/maintenance/' + tid;
+    var method = _editingMaintenanceRecord ? 'PUT' : 'POST';
+    var res = await fetch(url, {method: method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(record)});
+    if (!res.ok) throw new Error('save failed');
+    _pendingReceiptImage = null;
+    _editingMaintenanceRecord = null;
+    delete _maintenanceRecordsCache[tid];
+    showToast('Record saved — syncing to Drive...');
+    showPage('maintenance');
+    setTimeout(async function() {
+      try {
+        var sr = await fetch('/auth/google/status');
+        var sd = await sr.json();
+        showToast(sd.connected ? '✓ Synced to Google Drive' : 'Saved locally — connect Google Drive in Settings to enable cloud backup');
+      } catch(e) {}
+    }, 2000);
+  } catch(e) {
+    showToast('Error saving record');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Record'; }
+  }
+}
+
+// ── GOOGLE DRIVE STATUS (SETTINGS) ───────────────────
+
+async function loadGoogleDriveStatus() {
+  var area = g('drive-status-area'); if (!area) return;
+  try {
+    var res = await fetch('/auth/google/status');
+    if (!res.ok) throw new Error('status fetch failed');
+    var data = await res.json();
+    if (data.connected) {
+      var emailLabel = data.email ? ' — ' + escHtml(data.email) : '';
+      area.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+          '<span class="drive-status-badge drive-connected">✓ Connected' + emailLabel + '</span>' +
+          '<button class="btn btn-ghost btn-sm" onclick="disconnectGoogleDrive()">Disconnect</button>' +
+        '</div>';
+    } else {
+      area.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+          '<span class="drive-status-badge drive-disconnected">Not Connected</span>' +
+          '<a href="/auth/google" class="btn btn-primary btn-sm" style="text-decoration:none;">Connect Google Drive</a>' +
+        '</div>';
+    }
+  } catch(e) {
+    area.innerHTML = '<div style="color:var(--muted);font-size:13px;">Unable to check status</div>';
+  }
+}
+
+async function disconnectGoogleDrive() {
+  if (!confirm('Disconnect Google Drive? Future maintenance records will not sync until reconnected.')) return;
+  try {
+    var res = await fetch('/auth/google/disconnect', {method:'POST'});
+    if (!res.ok) throw new Error('disconnect failed');
+    showToast('Google Drive disconnected');
+    loadGoogleDriveStatus();
+  } catch(e) { showToast('Disconnect failed'); }
+}
