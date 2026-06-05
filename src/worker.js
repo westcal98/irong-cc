@@ -377,9 +377,22 @@ export default {
       return handleScanReceipt(request, env);
     }
 
+    if (url.pathname === '/maintenance/summary/all' && request.method === 'GET') {
+      return handleGetMaintenanceSummaryAll(request, env);
+    }
+
     if (url.pathname.startsWith('/maintenance/summary/') && request.method === 'GET') {
       const trailerId = url.pathname.slice('/maintenance/summary/'.length);
       return handleGetMaintenanceSummary(request, env, trailerId);
+    }
+
+    if (url.pathname === '/maintenance/all' && request.method === 'GET') {
+      return handleGetMaintenanceAll(request, env);
+    }
+
+    if (url.pathname.startsWith('/maintenance/export/') && request.method === 'GET') {
+      const trailerId = url.pathname.slice('/maintenance/export/'.length);
+      return handleGetMaintenanceExport(request, env, trailerId);
     }
 
     if (url.pathname.startsWith('/maintenance/') && request.method === 'GET') {
@@ -2038,6 +2051,245 @@ async function handleGetMaintenanceSummary(request, env, trailerId) {
     });
   } catch (err) {
     console.error('[IronG] Maintenance summary error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── MAINTENANCE ANALYTICS & EXPORT ────────────────────
+
+function csvField(val) {
+  const s = val == null ? '' : String(val);
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function isMaintenanceRecordKey(kvKey) {
+  // Record keys: maintenance:{trailerId}:{recordId} — contain two colons after prefix
+  return kvKey.slice('maintenance:'.length).includes(':');
+}
+
+async function handleGetMaintenanceSummaryAll(request, env) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'maintenance:' });
+    const recordKeys = list.keys.filter(k => isMaintenanceRecordKey(k.name));
+
+    const entries = await Promise.all(
+      recordKeys.map(async k => {
+        const val = await env.IRONG_KV.get(k.name);
+        try { return JSON.parse(val); } catch { return null; }
+      })
+    );
+    const allRecords = entries.filter(Boolean);
+
+    const trailerIds = new Set(allRecords.map(r => r.trailerId).filter(Boolean));
+    const trailerNames = {};
+    await Promise.all([...trailerIds].map(async tid => {
+      trailerNames[tid] = await getTrailerName(env, tid);
+    }));
+
+    const today = new Date().toISOString().slice(0, 10);
+    const in60Days = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    let totalCost = 0;
+    const byTrailer = {};
+    const byMonth = {};
+    const byServiceType = {};
+    const upcomingService = [];
+    const overdueService = [];
+
+    for (const r of allRecords) {
+      const tid = r.trailerId;
+      if (!tid) continue;
+
+      const cost = parseFloat(r.totalCost) || ((parseFloat(r.laborCost) || 0) + (parseFloat(r.partsCost) || 0));
+      totalCost += cost;
+
+      if (!byTrailer[tid]) {
+        byTrailer[tid] = {
+          trailerName: r.trailerName || trailerNames[tid] || tid,
+          totalCost: 0,
+          recordCount: 0,
+          lastServiceDate: null,
+          nextServiceDue: null,
+          avgCostPerRecord: 0,
+        };
+      }
+      byTrailer[tid].totalCost += cost;
+      byTrailer[tid].recordCount += 1;
+      if (r.date && (!byTrailer[tid].lastServiceDate || r.date > byTrailer[tid].lastServiceDate)) {
+        byTrailer[tid].lastServiceDate = r.date;
+      }
+      if (r.nextServiceDue && (!byTrailer[tid].nextServiceDue || r.nextServiceDue < byTrailer[tid].nextServiceDue)) {
+        byTrailer[tid].nextServiceDue = r.nextServiceDue;
+      }
+
+      if (r.date && r.date.length >= 7) {
+        const month = r.date.slice(0, 7);
+        if (!byMonth[month]) byMonth[month] = { totalCost: 0, recordCount: 0 };
+        byMonth[month].totalCost += cost;
+        byMonth[month].recordCount += 1;
+      }
+
+      const st = r.serviceType || 'Unknown';
+      if (!byServiceType[st]) byServiceType[st] = { count: 0, totalCost: 0 };
+      byServiceType[st].count += 1;
+      byServiceType[st].totalCost += cost;
+
+      if (r.nextServiceDue) {
+        const entry = {
+          trailerId: tid,
+          trailerName: r.trailerName || trailerNames[tid] || tid,
+          nextServiceDue: r.nextServiceDue,
+          serviceType: r.serviceType || '',
+          recordId: r.id,
+        };
+        if (r.nextServiceDue < today) {
+          overdueService.push(entry);
+        } else if (r.nextServiceDue <= in60Days) {
+          upcomingService.push(entry);
+        }
+      }
+    }
+
+    for (const tid of Object.keys(byTrailer)) {
+      const bt = byTrailer[tid];
+      bt.totalCost = Math.round(bt.totalCost * 100) / 100;
+      bt.avgCostPerRecord = bt.recordCount > 0 ? Math.round((bt.totalCost / bt.recordCount) * 100) / 100 : 0;
+    }
+    for (const month of Object.keys(byMonth)) {
+      byMonth[month].totalCost = Math.round(byMonth[month].totalCost * 100) / 100;
+    }
+    for (const st of Object.keys(byServiceType)) {
+      byServiceType[st].totalCost = Math.round(byServiceType[st].totalCost * 100) / 100;
+    }
+
+    upcomingService.sort((a, b) => a.nextServiceDue.localeCompare(b.nextServiceDue));
+    overdueService.sort((a, b) => a.nextServiceDue.localeCompare(b.nextServiceDue));
+
+    return new Response(JSON.stringify({
+      totalCost: Math.round(totalCost * 100) / 100,
+      totalRecords: allRecords.length,
+      byTrailer,
+      byMonth,
+      byServiceType,
+      upcomingService,
+      overdueService,
+    }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Maintenance summary all error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetMaintenanceAll(request, env) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'maintenance:' });
+    const entries = await Promise.all(
+      list.keys
+        .filter(k => isMaintenanceRecordKey(k.name))
+        .map(async k => {
+          const val = await env.IRONG_KV.get(k.name);
+          try { return JSON.parse(val); } catch { return null; }
+        })
+    );
+    const records = entries.filter(Boolean).sort((a, b) => {
+      if (a.date && b.date) return b.date.localeCompare(a.date);
+      return (b.id || 0) - (a.id || 0);
+    });
+    return new Response(JSON.stringify(records), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Maintenance all error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetMaintenanceExport(request, env, trailerId) {
+  const cors = getCors(request);
+  try {
+    let records;
+    if (trailerId === 'all') {
+      const list = await env.IRONG_KV.list({ prefix: 'maintenance:' });
+      const entries = await Promise.all(
+        list.keys
+          .filter(k => isMaintenanceRecordKey(k.name))
+          .map(async k => {
+            const val = await env.IRONG_KV.get(k.name);
+            try { return JSON.parse(val); } catch { return null; }
+          })
+      );
+      records = entries.filter(Boolean);
+    } else {
+      records = await getAllMaintenanceRecords(env, trailerId);
+    }
+
+    records.sort((a, b) => {
+      if (a.date && b.date) return b.date.localeCompare(a.date);
+      return (b.id || 0) - (a.id || 0);
+    });
+
+    const trailerNames = {};
+    const trailerIds = new Set(records.map(r => r.trailerId).filter(Boolean));
+    await Promise.all([...trailerIds].map(async tid => {
+      trailerNames[tid] = await getTrailerName(env, tid);
+    }));
+
+    const headerRow = ['Date','Trailer','Service Type','Description','Parts Used','Labor Cost','Parts Cost','Total Cost','Vendor Name','Vendor Phone','Invoice Ref','Performed By','Rental Count at Service','Next Service Due','Notes','Created At'].map(csvField).join(',');
+
+    const dataRows = records.map(r => {
+      const tName = r.trailerName || trailerNames[r.trailerId] || r.trailerId || '';
+      return [
+        r.date || '',
+        tName,
+        r.serviceType || '',
+        r.description || '',
+        r.partsUsed || '',
+        r.laborCost != null ? String(r.laborCost) : '',
+        r.partsCost != null ? String(r.partsCost) : '',
+        r.totalCost != null ? String(r.totalCost) : '',
+        r.vendorName || r.vendor || '',
+        r.vendorPhone || '',
+        r.invoiceRef || '',
+        r.performedBy || '',
+        r.rentalCountAtService != null ? String(r.rentalCountAtService) : '',
+        r.nextServiceDue || '',
+        r.notes || '',
+        r.createdAt || '',
+      ].map(csvField).join(',');
+    });
+
+    const csv = [headerRow, ...dataRows].join('\r\n');
+    const today = new Date().toISOString().slice(0, 10);
+    const filename = 'maintenance-log-' + trailerId + '-' + today + '.csv';
+
+    return new Response(csv, {
+      status: 200,
+      headers: {
+        ...cors,
+        'Content-Type': 'text/csv',
+        'Content-Disposition': 'attachment; filename="' + filename + '"',
+      },
+    });
+  } catch (err) {
+    console.error('[IronG] Maintenance export error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
