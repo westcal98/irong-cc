@@ -435,6 +435,62 @@ export default {
       return handlePostTrailerName(request, env, id);
     }
 
+    if (url.pathname === '/expenses/summary' && request.method === 'GET') {
+      return handleGetExpenseSummary(request, env);
+    }
+
+    if (url.pathname === '/expenses/export' && request.method === 'GET') {
+      return handleGetExpenseExport(request, env);
+    }
+
+    if (url.pathname === '/expenses' && request.method === 'GET') {
+      return handleGetExpenses(request, env);
+    }
+
+    if (url.pathname === '/expenses' && request.method === 'POST') {
+      return handlePostExpense(request, env);
+    }
+
+    if (url.pathname.startsWith('/expenses/') && request.method === 'GET') {
+      const id = url.pathname.slice('/expenses/'.length);
+      return handleGetExpense(request, env, id);
+    }
+
+    if (url.pathname.startsWith('/expenses/') && request.method === 'PUT') {
+      const id = url.pathname.slice('/expenses/'.length);
+      return handlePutExpense(request, env, id);
+    }
+
+    if (url.pathname.startsWith('/expenses/') && request.method === 'DELETE') {
+      const id = url.pathname.slice('/expenses/'.length);
+      return handleDeleteExpense(request, env, id);
+    }
+
+    if (url.pathname === '/revenue/summary' && request.method === 'GET') {
+      return handleGetRevenueSummary(request, env);
+    }
+
+    if (url.pathname === '/tax/liability' && request.method === 'GET') {
+      return handleGetTaxLiability(request, env);
+    }
+
+    if (url.pathname === '/mileage/summary' && request.method === 'GET') {
+      return handleGetMileageSummary(request, env);
+    }
+
+    if (url.pathname === '/mileage' && request.method === 'GET') {
+      return handleGetMileage(request, env);
+    }
+
+    if (url.pathname === '/mileage' && request.method === 'POST') {
+      return handlePostMileage(request, env);
+    }
+
+    if (url.pathname.startsWith('/mileage/') && request.method === 'DELETE') {
+      const id = url.pathname.slice('/mileage/'.length);
+      return handleDeleteMileage(request, env, id);
+    }
+
     return env.ASSETS.fetch(request);
   },
 };
@@ -2421,6 +2477,517 @@ async function handlePostTrailerName(request, env, id) {
     });
   } catch (err) {
     console.error('[IronG] Post trailer name error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── EXPENSE HANDLERS ───────────────────────────────────
+
+async function handlePostExpense(request, env) {
+  const cors = getCors(request);
+  try {
+    const body = await request.json();
+    const id = body.id || Date.now();
+    const record = { ...body, id };
+    await env.IRONG_KV.put('expense:' + id, JSON.stringify(record));
+    return new Response(JSON.stringify({ success: true, id }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post expense error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetExpenses(request, env) {
+  const cors = getCors(request);
+  const url = new URL(request.url);
+  const monthFilter = url.searchParams.get('month');
+  const categoryFilter = url.searchParams.get('category');
+  const yearFilter = url.searchParams.get('year');
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'expense:' });
+    const entries = await Promise.all(
+      list.keys.map(async k => {
+        const val = await env.IRONG_KV.get(k.name);
+        try { return JSON.parse(val); } catch { return null; }
+      })
+    );
+    let records = entries.filter(Boolean);
+    if (monthFilter) records = records.filter(r => r.date && r.date.startsWith(monthFilter));
+    if (yearFilter) records = records.filter(r => r.date && r.date.startsWith(yearFilter));
+    if (categoryFilter) records = records.filter(r => r.category === categoryFilter);
+    records.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    return new Response(JSON.stringify(records), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get expenses error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetExpense(request, env, id) {
+  const cors = getCors(request);
+  try {
+    const val = await env.IRONG_KV.get('expense:' + id);
+    if (!val) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(val, {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get expense error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePutExpense(request, env, id) {
+  const cors = getCors(request);
+  try {
+    const existing = await env.IRONG_KV.get('expense:' + id);
+    const current = existing ? JSON.parse(existing) : {};
+    const updates = await request.json();
+    const record = { ...current, ...updates };
+    await env.IRONG_KV.put('expense:' + id, JSON.stringify(record));
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Put expense error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleDeleteExpense(request, env, id) {
+  const cors = getCors(request);
+  try {
+    await env.IRONG_KV.delete('expense:' + id);
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Delete expense error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetExpenseSummary(request, env) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'expense:' });
+    const entries = await Promise.all(
+      list.keys.map(async k => {
+        const val = await env.IRONG_KV.get(k.name);
+        try { return JSON.parse(val); } catch { return null; }
+      })
+    );
+    const records = entries.filter(Boolean);
+
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+
+    let totalExpenses = 0;
+    const byCategory = {};
+    const byMonth = {};
+    let taxDeductibleTotal = 0;
+    let currentMonthTotal = 0;
+    let lastMonthTotal = 0;
+
+    for (const r of records) {
+      const amount = parseFloat(r.amount) || 0;
+      totalExpenses += amount;
+
+      const cat = r.category || 'Uncategorized';
+      if (!byCategory[cat]) byCategory[cat] = { total: 0, count: 0 };
+      byCategory[cat].total += amount;
+      byCategory[cat].count += 1;
+
+      if (r.date && r.date.length >= 7) {
+        const month = r.date.slice(0, 7);
+        if (!byMonth[month]) byMonth[month] = { total: 0, count: 0 };
+        byMonth[month].total += amount;
+        byMonth[month].count += 1;
+      }
+
+      if (r.taxDeductible) taxDeductibleTotal += amount;
+      if (r.date && r.date.startsWith(currentMonth)) currentMonthTotal += amount;
+      if (r.date && r.date.startsWith(lastMonth)) lastMonthTotal += amount;
+    }
+
+    const round2 = n => Math.round(n * 100) / 100;
+    for (const cat of Object.keys(byCategory)) byCategory[cat].total = round2(byCategory[cat].total);
+    for (const month of Object.keys(byMonth)) byMonth[month].total = round2(byMonth[month].total);
+
+    return new Response(JSON.stringify({
+      totalExpenses: round2(totalExpenses),
+      byCategory,
+      byMonth,
+      taxDeductibleTotal: round2(taxDeductibleTotal),
+      currentMonthTotal: round2(currentMonthTotal),
+      lastMonthTotal: round2(lastMonthTotal),
+    }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get expense summary error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetExpenseExport(request, env) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'expense:' });
+    const entries = await Promise.all(
+      list.keys.map(async k => {
+        const val = await env.IRONG_KV.get(k.name);
+        try { return JSON.parse(val); } catch { return null; }
+      })
+    );
+    const records = entries.filter(Boolean).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    const header = ['Date', 'Category', 'Description', 'Amount', 'Payment Method', 'Vendor Name', 'Tax Deductible', 'Notes', 'Created At'];
+    const rows = records.map(r => [
+      r.date || '',
+      r.category || '',
+      r.description || '',
+      r.amount != null ? String(r.amount) : '',
+      r.paymentMethod || '',
+      r.vendorName || '',
+      r.taxDeductible ? 'Yes' : 'No',
+      r.notes || '',
+      r.createdAt || '',
+    ].map(csvField).join(','));
+
+    const csv = [header.map(csvField).join(','), ...rows].join('\r\n');
+    const year = new Date().getFullYear();
+
+    return new Response(csv, {
+      status: 200,
+      headers: {
+        ...cors,
+        'Content-Type': 'text/csv',
+        'Content-Disposition': `attachment; filename="iron-g-expenses-${year}.csv"`,
+      },
+    });
+  } catch (err) {
+    console.error('[IronG] Expense export error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── REVENUE & TAX HANDLERS ─────────────────────────────
+
+async function handleGetRevenueSummary(request, env) {
+  const cors = getCors(request);
+  try {
+    const allBookings = await scanAllBookings(env);
+    const qualifying = allBookings.filter(bk =>
+      bk.status === 'complete' || bk.status === 'active' || bk.status === 'confirmed'
+    );
+
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+
+    let totalRevenue = 0;
+    let totalTaxCollected = 0;
+    let totalDepositsHeld = 0;
+    const byMonth = {};
+    let cmRevenue = 0, cmTax = 0, cmCount = 0;
+    let lmRevenue = 0, lmTax = 0, lmCount = 0;
+
+    for (const bk of qualifying) {
+      const rental = parseFloat(bk.rental) || 0;
+      const addOnsTotal = parseFloat(bk.addOnsTotal) || 0;
+      const tax = parseFloat(bk.tax) || 0;
+      const dep = parseFloat(bk.dep) || 0;
+      const rev = rental + addOnsTotal;
+
+      totalRevenue += rev;
+      totalTaxCollected += tax;
+      if (bk.depositStatus === 'held') totalDepositsHeld += dep;
+
+      const month = (bk.sd || '').slice(0, 7);
+      if (month) {
+        if (!byMonth[month]) byMonth[month] = { revenue: 0, taxCollected: 0, rentalCount: 0, depositCount: 0 };
+        byMonth[month].revenue += rev;
+        byMonth[month].taxCollected += tax;
+        byMonth[month].rentalCount += 1;
+        if (bk.depositStatus === 'held') byMonth[month].depositCount += 1;
+        if (month === currentMonth) { cmRevenue += rev; cmTax += tax; cmCount += 1; }
+        if (month === lastMonth) { lmRevenue += rev; lmTax += tax; lmCount += 1; }
+      }
+    }
+
+    const expList = await env.IRONG_KV.list({ prefix: 'expense:' });
+    const expEntries = await Promise.all(
+      expList.keys.map(async k => {
+        const val = await env.IRONG_KV.get(k.name);
+        try { return JSON.parse(val); } catch { return null; }
+      })
+    );
+    let totalExpenses = 0;
+    for (const e of expEntries.filter(Boolean)) totalExpenses += parseFloat(e.amount) || 0;
+
+    const round2 = n => Math.round(n * 100) / 100;
+    for (const m of Object.keys(byMonth)) {
+      byMonth[m].revenue = round2(byMonth[m].revenue);
+      byMonth[m].taxCollected = round2(byMonth[m].taxCollected);
+    }
+
+    return new Response(JSON.stringify({
+      totalRevenue: round2(totalRevenue),
+      totalTaxCollected: round2(totalTaxCollected),
+      totalDepositsHeld: round2(totalDepositsHeld),
+      byMonth,
+      currentMonth: { revenue: round2(cmRevenue), taxCollected: round2(cmTax), rentalCount: cmCount },
+      lastMonth: { revenue: round2(lmRevenue), taxCollected: round2(lmTax), rentalCount: lmCount },
+      netProfit: round2(totalRevenue - totalExpenses),
+    }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Revenue summary error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetTaxLiability(request, env) {
+  const cors = getCors(request);
+  try {
+    const allBookings = await scanAllBookings(env);
+    const qualifying = allBookings.filter(bk =>
+      bk.status === 'complete' || bk.status === 'active' || bk.status === 'confirmed'
+    );
+
+    const byMonth = {};
+    for (const bk of qualifying) {
+      const month = (bk.sd || '').slice(0, 7);
+      if (!month) continue;
+      const tax = parseFloat(bk.tax) || 0;
+      if (!byMonth[month]) byMonth[month] = { taxCollected: 0, rentalCount: 0 };
+      byMonth[month].taxCollected += tax;
+      byMonth[month].rentalCount += 1;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const currentMonthStr = today.slice(0, 7);
+    const lmDate = new Date();
+    lmDate.setDate(1);
+    lmDate.setMonth(lmDate.getMonth() - 1);
+    const lastMonthStr = lmDate.toISOString().slice(0, 7);
+
+    function getDueDate(month) {
+      const [y, m] = month.split('-').map(Number);
+      return new Date(y, m, 20).toISOString().slice(0, 10);
+    }
+
+    const round2 = n => Math.round(n * 100) / 100;
+
+    const byMonthArr = Object.entries(byMonth)
+      .map(([month, data]) => ({
+        month,
+        taxCollected: round2(data.taxCollected),
+        rentalCount: data.rentalCount,
+        dueDate: getDueDate(month),
+      }))
+      .sort((a, b) => b.month.localeCompare(a.month));
+
+    const currentData = byMonth[currentMonthStr] || { taxCollected: 0, rentalCount: 0 };
+    const lastData = byMonth[lastMonthStr] || { taxCollected: 0, rentalCount: 0 };
+    const lastDueDate = getDueDate(lastMonthStr);
+
+    let yearToDate = 0;
+    const currentYear = currentMonthStr.slice(0, 4);
+    for (const [month, data] of Object.entries(byMonth)) {
+      if (month.startsWith(currentYear)) yearToDate += data.taxCollected;
+    }
+
+    return new Response(JSON.stringify({
+      currentMonth: {
+        month: currentMonthStr,
+        taxCollected: round2(currentData.taxCollected),
+        dueDate: getDueDate(currentMonthStr),
+      },
+      lastMonth: {
+        month: lastMonthStr,
+        taxCollected: round2(lastData.taxCollected),
+        dueDate: lastDueDate,
+        isPastDue: today > lastDueDate,
+      },
+      byMonth: byMonthArr,
+      yearToDate: round2(yearToDate),
+    }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Tax liability error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ── MILEAGE HANDLERS ───────────────────────────────────
+
+async function handleGetMileage(request, env) {
+  const cors = getCors(request);
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'mileage:' });
+    const entries = await Promise.all(
+      list.keys.map(async k => {
+        const val = await env.IRONG_KV.get(k.name);
+        try { return JSON.parse(val); } catch { return null; }
+      })
+    );
+    const records = entries.filter(Boolean).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    return new Response(JSON.stringify(records), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Get mileage error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handlePostMileage(request, env) {
+  const cors = getCors(request);
+  try {
+    const body = await request.json();
+    const id = body.id || Date.now();
+    const record = { ...body, id };
+    await env.IRONG_KV.put('mileage:' + id, JSON.stringify(record));
+    return new Response(JSON.stringify({ success: true, id }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Post mileage error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleDeleteMileage(request, env, id) {
+  const cors = getCors(request);
+  try {
+    await env.IRONG_KV.delete('mileage:' + id);
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Delete mileage error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleGetMileageSummary(request, env) {
+  const cors = getCors(request);
+  const IRS_RATE = 0.70;
+  try {
+    const list = await env.IRONG_KV.list({ prefix: 'mileage:' });
+    const entries = await Promise.all(
+      list.keys.map(async k => {
+        const val = await env.IRONG_KV.get(k.name);
+        try { return JSON.parse(val); } catch { return null; }
+      })
+    );
+    const records = entries.filter(Boolean);
+
+    let totalMiles = 0;
+    const byMonth = {};
+    let currentYearMiles = 0;
+    const currentYear = new Date().getFullYear().toString();
+
+    for (const r of records) {
+      const miles = parseFloat(r.miles) || 0;
+      totalMiles += miles;
+
+      if (r.date && r.date.length >= 7) {
+        const month = r.date.slice(0, 7);
+        if (!byMonth[month]) byMonth[month] = { miles: 0, deduction: 0, tripCount: 0 };
+        byMonth[month].miles += miles;
+        byMonth[month].tripCount += 1;
+      }
+
+      if (r.date && r.date.startsWith(currentYear)) currentYearMiles += miles;
+    }
+
+    const round2 = n => Math.round(n * 100) / 100;
+    for (const month of Object.keys(byMonth)) {
+      byMonth[month].deduction = round2(byMonth[month].miles * IRS_RATE);
+      byMonth[month].miles = round2(byMonth[month].miles);
+    }
+
+    return new Response(JSON.stringify({
+      totalMiles: round2(totalMiles),
+      totalDeduction: round2(totalMiles * IRS_RATE),
+      byMonth,
+      currentYear: {
+        miles: round2(currentYearMiles),
+        deduction: round2(currentYearMiles * IRS_RATE),
+      },
+    }), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Mileage summary error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
