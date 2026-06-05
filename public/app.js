@@ -27,6 +27,20 @@ var _serviceTypes = null;
 var _pendingReceiptImage = null;
 var _totalCostOverride = false;
 var _maintPerformedBy = 'Self';
+var _expenseRecordsCache = [];
+var _editingExpenseRecord = null;
+var _pendingExpenseReceiptImage = null;
+var _currentExpenseFilter = 'all';
+var _currentExpenseCategoryFilter = '';
+var EXPENSE_CATEGORIES = [
+  'Trailer Payment (RTO)','Insurance','Storage','Fuel/Mileage',
+  'Maintenance & Repairs','Equipment & Supplies',
+  'Marketing & Advertising','Software & Subscriptions',
+  'Phone & Communications','Professional Services',
+  'Licensing & Permits','Meals & Entertainment',
+  'Office Supplies','Miscellaneous'
+];
+var EXPENSE_PAYMENT_METHODS = ['Cash','Debit Card','Credit Card','Check','Bank Transfer','Other'];
 var DEFAULT_SERVICE_TYPES = [
   'Tire Rotation/Replacement','Wheel Bearing Service','Brake Inspection/Replacement',
   'Light Repair/Replacement','Wiring Repair','Coupler Service/Replacement',
@@ -135,7 +149,10 @@ function openDrawer() { g('drawer').classList.add('open'); g('drawerOverlay').cl
 function closeDrawer() { g('drawer').classList.remove('open'); g('drawerOverlay').classList.remove('open'); }
 function navTo(id) { closeDrawer(); showPage(id); }
 
-function fabNewBooking() { startNewDraft(); }
+function fabNewBooking() {
+  if (currentPage === 'expenses') { openNewExpense(); return; }
+  startNewDraft();
+}
 
 // ── NAVIGATION ──────────────────────────────────────
 var titles = {
@@ -144,7 +161,8 @@ var titles = {
   pricing:'Pricing Reference', history:'Rental History', settings:'Settings',
   notifications:'Notifications', drafts:'Drafts', 'process-return':'Process Return',
   messaging:'Messaging', docs:'Documents',
-  maintenance:'Maintenance Log', 'maintenance-record':'Maintenance Record'
+  maintenance:'Maintenance Log', 'maintenance-record':'Maintenance Record',
+  expenses:'Business Expenses'
 };
 
 function showPage(id, skipPush) {
@@ -162,7 +180,7 @@ function showPage(id, skipPush) {
     'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals',
     'new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications',
     'drafts':'dnav-drafts','messaging':'dnav-messaging','docs':'dnav-docs',
-    'maintenance':'dnav-maintenance'
+    'maintenance':'dnav-maintenance','expenses':'dnav-expenses'
   };
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
@@ -176,6 +194,7 @@ function showPage(id, skipPush) {
   if (id === 'new-booking') drawAvail();
   if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGlobalVarSettings(); loadGoogleDriveStatus(); }
   if (id === 'maintenance') drawMaintenancePage();
+  if (id === 'expenses') drawExpensesPage();
   if (id === 'maintenance-record') { /* form already built before navTo */ }
   if (id === 'messaging') drawMessaging();
   if (id === 'docs') drawDocs();
@@ -4082,5 +4101,422 @@ async function loadDashboardMaintAlerts() {
     }
   } catch(e) {
     container.innerHTML = '';
+  }
+}
+
+// ── EXPENSES PAGE ─────────────────────────────────────
+
+async function drawExpensesPage() {
+  var page = g('page-expenses'); if (!page) return;
+  page.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">Loading...</div>';
+  try {
+    var results = await Promise.allSettled([fetch('/expenses/summary'), fetch('/expenses')]);
+    var summaryResult = results[0], recordsResult = results[1];
+    var summary = {};
+    if (summaryResult.status === 'fulfilled' && summaryResult.value.ok) {
+      try { summary = await summaryResult.value.json(); } catch(e) {}
+    }
+    var records = [];
+    if (recordsResult.status === 'fulfilled' && recordsResult.value.ok) {
+      try { records = await recordsResult.value.json(); } catch(e) {}
+    }
+    _expenseRecordsCache = Array.isArray(records) ? records : [];
+
+    if (!g('page-expenses')) return;
+
+    var catOptions = '<option value="">All Categories</option>' +
+      EXPENSE_CATEGORIES.map(function(c) {
+        return '<option value="' + escHtml(c) + '"' + (_currentExpenseCategoryFilter === c ? ' selected' : '') + '>' + escHtml(c) + '</option>';
+      }).join('');
+
+    page.innerHTML =
+      '<div class="expense-page-header">' +
+        '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;">All Expenses</div>' +
+        '<button class="btn btn-ghost btn-sm" onclick="exportExpensesCSV()">⬇ Export CSV</button>' +
+      '</div>' +
+      '<div class="expense-summary-pills">' +
+        '<div class="expense-pill"><div class="expense-pill-label">This Month</div><div class="expense-pill-value" id="exp-pill-month">$' + ((summary.currentMonthTotal || 0).toFixed(2)) + '</div></div>' +
+        '<div class="expense-pill"><div class="expense-pill-label">Last Month</div><div class="expense-pill-value" id="exp-pill-lastmonth">$' + ((summary.lastMonthTotal || 0).toFixed(2)) + '</div></div>' +
+        '<div class="expense-pill"><div class="expense-pill-label">Tax Ded. YTD</div><div class="expense-pill-value" id="exp-pill-deductible">$' + ((summary.taxDeductibleTotal || 0).toFixed(2)) + '</div></div>' +
+      '</div>' +
+      '<div class="expense-filter-row">' +
+        '<button class="expense-filter-tab' + (_currentExpenseFilter === 'all' ? ' active' : '') + '" onclick="setExpenseFilter(\'all\')">All</button>' +
+        '<button class="expense-filter-tab' + (_currentExpenseFilter === 'month' ? ' active' : '') + '" onclick="setExpenseFilter(\'month\')">This Month</button>' +
+        '<button class="expense-filter-tab' + (_currentExpenseFilter === 'lastmonth' ? ' active' : '') + '" onclick="setExpenseFilter(\'lastmonth\')">Last Month</button>' +
+        '<select class="form-select" id="expense-cat-filter" onchange="setExpenseCategoryFilter(this.value)" style="flex:1;min-width:0;font-size:12px;padding:8px 28px 8px 10px;">' + catOptions + '</select>' +
+      '</div>' +
+      '<div id="expense-records-body"></div>';
+
+    renderExpenseCards(_expenseRecordsCache);
+  } catch(e) {
+    var pg = g('page-expenses');
+    if (pg) pg.innerHTML = '<div style="color:var(--danger);text-align:center;padding:20px;font-size:13px;">Failed to load expenses.</div>';
+  }
+}
+
+function setExpenseFilter(filter) {
+  _currentExpenseFilter = filter;
+  document.querySelectorAll('.expense-filter-tab').forEach(function(t, i) {
+    var map = ['all', 'month', 'lastmonth'];
+    t.classList.toggle('active', map[i] === filter);
+  });
+  renderExpenseCards(_expenseRecordsCache);
+}
+
+function setExpenseCategoryFilter(val) {
+  _currentExpenseCategoryFilter = val;
+  renderExpenseCards(_expenseRecordsCache);
+}
+
+function renderExpenseCards(records) {
+  var container = g('expense-records-body'); if (!container) return;
+  var now = new Date();
+  var currentMonth = now.toISOString().slice(0, 7);
+  var lmDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  var lastMonth = lmDate.toISOString().slice(0, 7);
+
+  var filtered = records;
+  if (_currentExpenseFilter === 'month') {
+    filtered = filtered.filter(function(r) { return r.date && r.date.startsWith(currentMonth); });
+  } else if (_currentExpenseFilter === 'lastmonth') {
+    filtered = filtered.filter(function(r) { return r.date && r.date.startsWith(lastMonth); });
+  }
+  if (_currentExpenseCategoryFilter) {
+    filtered = filtered.filter(function(r) { return r.category === _currentExpenseCategoryFilter; });
+  }
+
+  if (!filtered.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No expenses recorded yet. Tap + to add your first expense.</div>';
+    return;
+  }
+
+  var h = '';
+  filtered.forEach(function(r) {
+    var amount = parseFloat(r.amount) || 0;
+    var displayName = r.vendorName || r.description || '—';
+    var deductibleHtml = r.taxDeductible ? '<span class="expense-deductible-tag">✓ Deductible</span>' : '';
+    var thumbHtml = r.receiptImage
+      ? '<div style="margin-bottom:8px;"><img src="' + escHtml(r.receiptImage) + '" class="receipt-thumb" onclick="event.stopPropagation();viewExpenseReceiptFull(\'' + escHtml(String(r.id)) + '\')" alt="Receipt"></div>'
+      : '';
+    h += '<div class="expense-card" id="exc-' + escHtml(String(r.id)) + '">' +
+      '<div onclick="toggleExpenseDetail(\'' + escHtml(String(r.id)) + '\')" style="cursor:pointer;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:10px;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:12px;color:var(--muted);font-family:\'Oswald\',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px;">' + escHtml(fmtDateLong(r.date)) + '</div>' +
+            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
+              (r.category ? '<span class="expense-cat-badge">' + escHtml(r.category) + '</span>' : '') +
+              deductibleHtml +
+            '</div>' +
+          '</div>' +
+          '<div class="expense-amount">$' + amount.toFixed(2) + '</div>' +
+        '</div>' +
+        '<div style="font-size:13px;color:var(--text);margin-bottom:4px;">' + escHtml(displayName) + '</div>' +
+        thumbHtml +
+        '<div id="exd-' + escHtml(String(r.id)) + '" class="expense-detail"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1a1a1a;">' +
+        '<button class="btn btn-ghost btn-sm" onclick="editExpense(\'' + escHtml(String(r.id)) + '\')">Edit</button>' +
+        '<button class="btn btn-danger btn-sm" onclick="deleteExpense(\'' + escHtml(String(r.id)) + '\')">Delete</button>' +
+      '</div>' +
+    '</div>';
+  });
+  container.innerHTML = h;
+}
+
+function toggleExpenseDetail(id) {
+  var el = g('exd-' + id); if (!el) return;
+  if (el.classList.contains('open')) { el.classList.remove('open'); return; }
+  var r = null;
+  for (var i = 0; i < _expenseRecordsCache.length; i++) { if (String(_expenseRecordsCache[i].id) === String(id)) { r = _expenseRecordsCache[i]; break; } }
+  if (!r) return;
+  el.innerHTML =
+    crow('Description', r.description) +
+    crow('Payment Method', r.paymentMethod) +
+    crow('Vendor Name', r.vendorName) +
+    crow('Invoice / Receipt #', r.invoiceRef) +
+    crow('Notes', r.notes) +
+    crow('Created At', r.createdAt ? new Date(r.createdAt).toLocaleString() : null);
+  el.classList.add('open');
+}
+
+function viewExpenseReceiptFull(id) {
+  var r = null;
+  for (var i = 0; i < _expenseRecordsCache.length; i++) { if (String(_expenseRecordsCache[i].id) === String(id)) { r = _expenseRecordsCache[i]; break; } }
+  if (!r || !r.receiptImage) return;
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.onclick = function() { document.body.removeChild(overlay); };
+  overlay.innerHTML = '<img src="' + escHtml(r.receiptImage) + '" style="max-width:100%;max-height:90vh;border-radius:4px;">';
+  document.body.appendChild(overlay);
+}
+
+function editExpense(id) {
+  var r = null;
+  for (var i = 0; i < _expenseRecordsCache.length; i++) { if (String(_expenseRecordsCache[i].id) === String(id)) { r = _expenseRecordsCache[i]; break; } }
+  if (!r) return;
+  openExpenseForm(r);
+}
+
+async function deleteExpense(id) {
+  if (!confirm('Delete this expense? This cannot be undone.')) return;
+  try {
+    var res = await fetch('/expenses/' + id, {method: 'DELETE'});
+    if (!res.ok) throw new Error('delete failed');
+    _expenseRecordsCache = _expenseRecordsCache.filter(function(r) { return String(r.id) !== String(id); });
+    var container = g('expense-records-body');
+    if (container) renderExpenseCards(_expenseRecordsCache);
+    refreshExpenseSummaryPills();
+    showToast('Expense deleted');
+  } catch(e) { showToast('Delete failed'); }
+}
+
+async function refreshExpenseSummaryPills() {
+  try {
+    var res = await fetch('/expenses/summary');
+    if (!res.ok) return;
+    var summary = await res.json();
+    var mEl = g('exp-pill-month'); if (mEl) mEl.textContent = '$' + (summary.currentMonthTotal || 0).toFixed(2);
+    var lEl = g('exp-pill-lastmonth'); if (lEl) lEl.textContent = '$' + (summary.lastMonthTotal || 0).toFixed(2);
+    var dEl = g('exp-pill-deductible'); if (dEl) dEl.textContent = '$' + (summary.taxDeductibleTotal || 0).toFixed(2);
+  } catch(e) {}
+}
+
+async function exportExpensesCSV() {
+  showToast('Downloading CSV...');
+  try {
+    var res = await fetch('/expenses/export');
+    if (!res.ok) throw new Error('export failed');
+    var blob = await res.blob();
+    var year = new Date().getFullYear();
+    var filename = 'iron-g-expenses-' + year + '.csv';
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  } catch(e) { showToast('Export failed'); }
+}
+
+// ── EXPENSE FORM ──────────────────────────────────────
+
+function openNewExpense() {
+  _editingExpenseRecord = null;
+  _pendingExpenseReceiptImage = null;
+  openExpenseForm(null);
+}
+
+function openExpenseForm(record) {
+  _editingExpenseRecord = record || null;
+  _pendingExpenseReceiptImage = null;
+  var r = record || {};
+  var isEdit = !!record;
+  var today = new Date().toISOString().slice(0, 10);
+  var taxOn = (r.taxDeductible !== false);
+
+  var catOptions = '<option value="">— Select —</option>' +
+    EXPENSE_CATEGORIES.map(function(c) {
+      return '<option value="' + escHtml(c) + '"' + (c === (r.category || '') ? ' selected' : '') + '>' + escHtml(c) + '</option>';
+    }).join('');
+
+  var pmOptions = '<option value="">— Select —</option>' +
+    EXPENSE_PAYMENT_METHODS.map(function(m) {
+      return '<option value="' + escHtml(m) + '"' + (m === (r.paymentMethod || '') ? ' selected' : '') + '>' + escHtml(m) + '</option>';
+    }).join('');
+
+  var thumbHtml = r.receiptImage
+    ? '<div id="exp-receipt-thumb-wrap" style="margin-top:8px;display:flex;align-items:center;gap:8px;"><img id="exp-receipt-thumb-preview" src="' + escHtml(r.receiptImage) + '" class="receipt-thumb"><button class="btn btn-ghost btn-sm" id="exp-receipt-remove-btn" onclick="removeExpenseReceiptImage()" type="button">× Remove</button></div>'
+    : '<div id="exp-receipt-thumb-wrap" style="margin-top:8px;display:none;align-items:center;gap:8px;"><img id="exp-receipt-thumb-preview" src="" class="receipt-thumb" style="display:none;"><button class="btn btn-ghost btn-sm" id="exp-receipt-remove-btn" onclick="removeExpenseReceiptImage()" type="button" style="display:none;">× Remove</button></div>';
+
+  var html =
+    '<div class="fg"><label class="fl">Date *</label>' +
+      '<input class="fi" id="ef-date" type="date" value="' + escHtml(r.date || today) + '">' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Category *</label>' +
+      '<select class="form-select" id="ef-category">' + catOptions + '</select>' +
+      '<div class="maint-field-error" id="ef-err-category">Category is required</div>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Description *</label>' +
+      '<input class="fi" id="ef-description" type="text" value="' + escHtml(r.description || '') + '" placeholder="What was this expense for?">' +
+      '<div class="maint-field-error" id="ef-err-description">Description is required</div>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Amount *</label>' +
+      '<div class="maint-cost-row"><span class="maint-cost-prefix">$</span>' +
+        '<input class="fi" id="ef-amount" type="number" min="0" step="0.01" value="' + escHtml(r.amount != null ? String(r.amount) : '') + '" placeholder="0.00" style="flex:1;">' +
+      '</div>' +
+      '<div class="maint-field-error" id="ef-err-amount">Amount is required</div>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Payment Method</label>' +
+      '<select class="form-select" id="ef-payment-method">' + pmOptions + '</select>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Vendor Name</label>' +
+      '<input class="fi" id="ef-vendor" type="text" value="' + escHtml(r.vendorName || '') + '" placeholder="Optional">' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Invoice / Receipt #</label>' +
+      '<input class="fi" id="ef-invoice" type="text" value="' + escHtml(r.invoiceRef || '') + '" placeholder="Optional">' +
+    '</div>' +
+
+    '<div class="fg" style="margin-bottom:14px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+        '<label class="fl" style="margin:0;">Tax Deductible</label>' +
+        '<label class="expense-toggle">' +
+          '<input type="checkbox" id="ef-tax-deductible"' + (taxOn ? ' checked' : '') + '>' +
+          '<span class="expense-toggle-slider"></span>' +
+        '</label>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Notes</label>' +
+      '<textarea class="fi form-textarea" id="ef-notes" rows="2" placeholder="Optional">' + escHtml(r.notes || '') + '</textarea>' +
+    '</div>' +
+
+    '<div class="fg"><label class="fl">Receipt Scanner</label>' +
+      '<input type="file" id="ef-receipt-input" accept="image/*" capture="camera" style="display:none;" onchange="scanExpenseReceiptImage(this)">' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+        '<button class="btn btn-ghost btn-sm" onclick="g(\'ef-receipt-input\').click()" type="button">📷 Scan Receipt</button>' +
+        '<span id="exp-scan-status" style="font-size:12px;color:var(--muted);display:none;"></span>' +
+      '</div>' +
+      thumbHtml +
+    '</div>' +
+
+    '<button class="btn btn-primary" id="expense-save-btn" onclick="saveExpenseRecord()" style="width:100%;padding:14px;font-size:14px;letter-spacing:2px;margin-top:8px;" type="button">Save Expense</button>';
+
+  var titleEl = g('expense-panel-title');
+  if (titleEl) titleEl.textContent = isEdit ? 'Edit Expense' : 'New Expense';
+  var panelBody = g('expense-panel-body');
+  if (panelBody) panelBody.innerHTML = html;
+  openExpensePanel();
+}
+
+function openExpensePanel() {
+  var overlay = g('expense-panel-overlay');
+  var panel = g('expense-slide-panel');
+  if (overlay) overlay.classList.add('open');
+  if (panel) panel.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeExpensePanel() {
+  var overlay = g('expense-panel-overlay');
+  var panel = g('expense-slide-panel');
+  if (overlay) overlay.classList.remove('open');
+  if (panel) panel.classList.remove('open');
+  document.body.style.overflow = '';
+  _editingExpenseRecord = null;
+  _pendingExpenseReceiptImage = null;
+}
+
+function scanExpenseReceiptImage(input) {
+  var file = input.files[0]; if (!file) return;
+  var statusEl = g('exp-scan-status');
+  if (statusEl) { statusEl.textContent = 'Reading receipt...'; statusEl.style.color = 'var(--muted)'; statusEl.style.display = ''; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var dataUrl = e.target.result;
+    var base64 = dataUrl.split(',')[1];
+    var mimeType = file.type || 'image/jpeg';
+    _pendingExpenseReceiptImage = dataUrl;
+    var wrap = g('exp-receipt-thumb-wrap');
+    var thumb = g('exp-receipt-thumb-preview');
+    var removeBtn = g('exp-receipt-remove-btn');
+    if (thumb) { thumb.src = dataUrl; thumb.style.display = 'block'; }
+    if (removeBtn) { removeBtn.style.display = 'inline-flex'; }
+    if (wrap) { wrap.style.display = 'flex'; }
+    fetch('/maintenance/scan-receipt', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({imageBase64: base64, mimeType: mimeType})
+    }).then(function(res) {
+      if (!res.ok) throw new Error('scan failed');
+      return res.json();
+    }).then(function(data) {
+      function setField(id, val) { var el = g(id); if (el && val != null && String(val).trim()) el.value = val; }
+      setField('ef-vendor', data.vendorName);
+      setField('ef-invoice', data.invoiceRef);
+      if (data.totalCost != null) setField('ef-amount', data.totalCost);
+      var _today = new Date().toISOString().slice(0, 10);
+      var dateEl = g('ef-date');
+      if (dateEl && dateEl.value === _today && data.date) dateEl.value = data.date;
+      if (data.notes) { var notesEl = g('ef-notes'); if (notesEl) notesEl.value = (notesEl.value ? notesEl.value + '\n' : '') + data.notes; }
+      if (statusEl) statusEl.style.display = 'none';
+      showToast('✓ Receipt scanned — review and confirm fields');
+    }).catch(function() {
+      if (statusEl) { statusEl.textContent = 'Could not read receipt — enter manually'; statusEl.style.color = 'var(--danger)'; }
+    });
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeExpenseReceiptImage() {
+  _pendingExpenseReceiptImage = null;
+  var thumb = g('exp-receipt-thumb-preview'); if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
+  var removeBtn = g('exp-receipt-remove-btn'); if (removeBtn) removeBtn.style.display = 'none';
+  var wrap = g('exp-receipt-thumb-wrap'); if (wrap) wrap.style.display = 'none';
+  var inp = g('ef-receipt-input'); if (inp) inp.value = '';
+  if (_editingExpenseRecord) _editingExpenseRecord._clearImage = true;
+}
+
+function _clearExpenseErrors() {
+  ['ef-err-category', 'ef-err-description', 'ef-err-amount'].forEach(function(id) {
+    var el = g(id); if (el) el.classList.remove('vis');
+  });
+}
+
+async function saveExpenseRecord() {
+  _clearExpenseErrors();
+  var dateVal = g('ef-date') ? g('ef-date').value : '';
+  var category = g('ef-category') ? g('ef-category').value : '';
+  var description = g('ef-description') ? g('ef-description').value.trim() : '';
+  var amountEl = g('ef-amount');
+  var amount = amountEl ? parseFloat(amountEl.value) : NaN;
+
+  var valid = true;
+  if (!category) { var e1 = g('ef-err-category'); if (e1) e1.classList.add('vis'); valid = false; }
+  if (!description) { var e2 = g('ef-err-description'); if (e2) e2.classList.add('vis'); valid = false; }
+  if (!amountEl || amountEl.value === '' || isNaN(amount)) { var e3 = g('ef-err-amount'); if (e3) e3.classList.add('vis'); valid = false; }
+  if (!valid) return;
+
+  var taxDeductibleEl = g('ef-tax-deductible');
+  var existingImage = _editingExpenseRecord && !(_editingExpenseRecord._clearImage) ? _editingExpenseRecord.receiptImage : null;
+  var now = Date.now();
+  var record = {
+    id: _editingExpenseRecord ? _editingExpenseRecord.id : now,
+    date: dateVal || new Date().toISOString().slice(0, 10),
+    category: category,
+    description: description,
+    amount: amount,
+    paymentMethod: g('ef-payment-method') ? g('ef-payment-method').value : '',
+    vendorName: g('ef-vendor') ? g('ef-vendor').value.trim() : '',
+    invoiceRef: g('ef-invoice') ? g('ef-invoice').value.trim() : '',
+    taxDeductible: taxDeductibleEl ? taxDeductibleEl.checked : true,
+    notes: g('ef-notes') ? g('ef-notes').value.trim() : '',
+    receiptImage: _pendingExpenseReceiptImage || existingImage || null,
+    createdAt: _editingExpenseRecord ? (_editingExpenseRecord.createdAt || now) : now
+  };
+
+  var btn = g('expense-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  try {
+    var url = _editingExpenseRecord ? '/expenses/' + _editingExpenseRecord.id : '/expenses';
+    var method = _editingExpenseRecord ? 'PUT' : 'POST';
+    var res = await fetch(url, {method: method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(record)});
+    if (!res.ok) throw new Error('save failed');
+    _pendingExpenseReceiptImage = null;
+    _editingExpenseRecord = null;
+    closeExpensePanel();
+    showToast('Expense saved');
+    var listRes = await fetch('/expenses');
+    if (listRes.ok) { try { _expenseRecordsCache = await listRes.json(); } catch(ex) {} }
+    var container = g('expense-records-body');
+    if (container) renderExpenseCards(_expenseRecordsCache);
+    refreshExpenseSummaryPills();
+  } catch(e) {
+    showToast('Save failed — please try again');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Expense'; }
   }
 }

@@ -421,3 +421,38 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
   #maint-print-area{display:block !important;}
   body{background:#fff !important;color:#000 !important;}
 }
+
+/* ── EXPENSES PAGE ── */
+.expense-page-header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px 6px;}
+.expense-summary-pills{display:flex;gap:8px;padding:8px 16px 12px;overflow-x:auto;}
+.expense-pill{background:var(--surface);border:1px solid #1e1e1e;border-radius:12px;padding:10px 16px;min-width:110px;flex-shrink:0;}
+.expense-pill-label{font-family:'Oswald',sans-serif;font-size:10px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;}
+.expense-pill-value{font-size:18px;font-weight:600;color:var(--primary);}
+.expense-filter-row{display:flex;gap:6px;align-items:center;padding:0 16px 12px;overflow-x:auto;}
+.expense-filter-tab{background:transparent;border:1px solid #2a2a2a;color:var(--muted);border-radius:20px;padding:6px 14px;font-size:12px;font-family:'Oswald',sans-serif;letter-spacing:1px;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:background .15s,color .15s;}
+.expense-filter-tab.active{background:var(--primary);border-color:var(--primary);color:#000;}
+.expense-card{background:var(--surface);border:1px solid #1a1a1a;border-radius:10px;padding:14px 16px;margin:0 16px 10px;}
+.expense-amount{font-size:20px;font-weight:700;color:var(--primary);white-space:nowrap;}
+.expense-cat-badge{display:inline-block;background:rgba(255,183,0,.12);color:var(--primary);border:1px solid rgba(255,183,0,.3);border-radius:4px;padding:2px 8px;font-size:11px;font-family:'Oswald',sans-serif;letter-spacing:.5px;}
+.expense-deductible-tag{display:inline-block;background:rgba(0,200,120,.12);color:#00c87a;border:1px solid rgba(0,200,120,.3);border-radius:4px;padding:2px 8px;font-size:11px;}
+.expense-detail{max-height:0;overflow:hidden;transition:max-height .25s ease;font-size:12px;}
+.expense-detail.open{max-height:400px;}
+
+/* ── EXPENSE SLIDE PANEL ── */
+.expense-panel-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1100;display:none;}
+.expense-panel-overlay.open{display:block;}
+.expense-slide-panel{position:fixed;left:0;right:0;bottom:0;z-index:1101;background:var(--surface);border-radius:18px 18px 0 0;max-height:92vh;overflow-y:auto;transform:translateY(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);}
+.expense-slide-panel.open{transform:translateY(0);}
+.expense-panel-handle{width:36px;height:4px;background:#333;border-radius:2px;margin:12px auto 4px;}
+.expense-panel-header{display:flex;justify-content:space-between;align-items:center;padding:10px 20px 14px;border-bottom:1px solid #1a1a1a;}
+.expense-panel-title{font-family:'Oswald',sans-serif;font-size:16px;letter-spacing:2px;text-transform:uppercase;color:var(--text);}
+.expense-panel-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px;line-height:1;}
+.expense-panel-body{padding:18px 20px 32px;}
+
+/* ── EXPENSE TOGGLE SWITCH ── */
+.expense-toggle{position:relative;display:inline-block;width:46px;height:26px;flex-shrink:0;}
+.expense-toggle input{opacity:0;width:0;height:0;}
+.expense-toggle-slider{position:absolute;cursor:pointer;inset:0;background:#2a2a2a;border-radius:26px;transition:.3s;}
+.expense-toggle-slider:before{content:'';position:absolute;height:20px;width:20px;left:3px;bottom:3px;background:#666;border-radius:50%;transition:.3s;}
+.expense-toggle input:checked + .expense-toggle-slider{background:rgba(255,183,0,.25);border:1px solid var(--primary);}
+.expense-toggle input:checked + .expense-toggle-slider:before{transform:translateX(20px);background:var(--primary);}
