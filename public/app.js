@@ -167,7 +167,7 @@ var titles = {
   notifications:'Notifications', drafts:'Drafts', 'process-return':'Process Return',
   messaging:'Messaging', docs:'Documents',
   maintenance:'Maintenance Log', 'maintenance-record':'Maintenance Record',
-  expenses:'Business Expenses', financials:'Financials'
+  expenses:'Business Expenses', financials:'Financials', 'business-info':'Business Info'
 };
 
 function showPage(id, skipPush) {
@@ -185,7 +185,7 @@ function showPage(id, skipPush) {
     'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals',
     'new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications',
     'drafts':'dnav-drafts','messaging':'dnav-messaging','docs':'dnav-docs',
-    'maintenance':'dnav-maintenance','expenses':'dnav-expenses','financials':'dnav-financials'
+    'maintenance':'dnav-maintenance','expenses':'dnav-expenses','financials':'dnav-financials','business-info':'dnav-business-info'
   };
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
@@ -201,6 +201,7 @@ function showPage(id, skipPush) {
   if (id === 'maintenance') drawMaintenancePage();
   if (id === 'expenses') drawExpensesPage();
   if (id === 'financials') drawFinancialsPage();
+  if (id === 'business-info') drawBusinessInfoPage();
   if (id === 'maintenance-record') { /* form already built before navTo */ }
   if (id === 'messaging') drawMessaging();
   if (id === 'docs') drawDocs();
@@ -2130,6 +2131,7 @@ function drawDashboard() {
   updateStats();
   loadDashboardMaintAlerts();
   loadDashboardTaxReminder();
+  loadDashboardInsurReminder();
   var df = g('dashFleet');
   if (df) {
     var h = '';
@@ -5091,4 +5093,261 @@ async function loadDashboardTaxReminder() {
       '</div>' +
     '</div>';
   }
+}
+
+// ── BUSINESS INFO PAGE ─────────────────────────────────
+
+var _biAdditionalPermits = [];
+
+async function drawBusinessInfoPage() {
+  var page = g('page-business-info'); if (!page) return;
+  page.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);font-size:13px;">Loading...</div>';
+
+  var d = {};
+  try {
+    var res = await fetch('/businessinfo');
+    if (res.ok) { try { d = await res.json(); } catch(e) {} }
+  } catch(e) {}
+
+  _biAdditionalPermits = Array.isArray(d.additionalPermits)
+    ? d.additionalPermits.map(function(p) { return {name: p.name || '', number: p.number || ''}; })
+    : [];
+
+  var now = new Date();
+  var today = now.toISOString().slice(0, 10);
+  var nextDueDate = new Date(now.getFullYear(), now.getMonth() + 1, 20);
+  var nextDueDateStr = nextDueDate.toISOString().slice(0, 10);
+  var daysToFile = Math.round((nextDueDate - now) / (1000 * 60 * 60 * 24));
+  var nextDueLabel = nextDueDate.toLocaleDateString('en-US', {month: 'long', day: 'numeric', year: 'numeric'});
+  var nextDueColor = today > nextDueDateStr ? 'var(--danger)' : (daysToFile <= 10 ? 'var(--warning)' : 'var(--text)');
+
+  var insurWarning = '';
+  if (d.renewalDate) {
+    var renewDate = new Date(d.renewalDate + 'T00:00:00');
+    var daysToRenew = Math.round((renewDate - now) / (1000 * 60 * 60 * 24));
+    var rLabel = renewDate.toLocaleDateString('en-US', {month: 'long', day: 'numeric', year: 'numeric'});
+    if (daysToRenew < 0) {
+      insurWarning = '<div style="background:rgba(255,60,60,.1);border:1px solid rgba(255,60,60,.3);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--danger);">⚠ Insurance renewal may be overdue — check policy</div>';
+    } else if (daysToRenew <= 30) {
+      insurWarning = '<div style="background:rgba(255,183,0,.1);border:1px solid rgba(255,183,0,.3);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--warning);">⚠ Insurance renewal coming up on ' + escHtml(rLabel) + '</div>';
+    }
+  }
+
+  function fi(id, label, type, val, ph, extra) {
+    var ea = extra ? ' ' + extra : '';
+    if (type === 'textarea') {
+      return '<div class="fg"><label class="fl">' + label + '</label>' +
+        '<textarea class="fi form-textarea" id="' + id + '" rows="2" placeholder="' + escHtml(ph || '') + '"' + ea + '>' + escHtml(val || '') + '</textarea></div>';
+    }
+    return '<div class="fg"><label class="fl">' + label + '</label>' +
+      '<input class="fi" id="' + id + '" type="' + type + '" value="' + escHtml(String(val || '')) + '" placeholder="' + escHtml(ph || '') + '"' + ea + '></div>';
+  }
+
+  page.innerHTML =
+    '<div class="expense-page-header">' +
+      '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;">Business Info</div>' +
+      '<button class="btn btn-ghost btn-sm" onclick="exportBusinessInfo()">⬇ Export</button>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title"><span class="bi-section-header">Business Identity</span></div></div>' +
+      '<div class="card-body">' +
+        fi('bi-legalName', 'Legal Business Name', 'text', d.legalName, 'Iron G Equipment Co. LLC') +
+        fi('bi-dba', 'DBA / Trade Name', 'text', d.dba, 'Iron G Equipment Co.') +
+        fi('bi-ein', 'EIN', 'text', d.ein, 'XX-XXXXXXX') +
+        fi('bi-formationDate', 'Formation Date', 'date', d.formationDate, '') +
+        fi('bi-formationState', 'State of Formation', 'text', d.formationState || 'Oklahoma', 'Oklahoma') +
+        fi('bi-llcType', 'LLC Type', 'text', d.llcType || 'Single-member LLC', 'Single-member LLC') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title"><span class="bi-section-header">Registered Agent</span></div></div>' +
+      '<div class="card-body">' +
+        fi('bi-agentName', 'Agent Name', 'text', d.agentName || 'Northwest Registered Agent', 'Northwest Registered Agent') +
+        fi('bi-agentAddress', 'Registered Address', 'textarea', d.agentAddress, '') +
+        fi('bi-agentPhone', 'Agent Phone', 'tel', d.agentPhone, '') +
+        fi('bi-agentEmail', 'Agent Email', 'email', d.agentEmail, '') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title"><span class="bi-section-header">Contact &amp; Location</span></div></div>' +
+      '<div class="card-body">' +
+        fi('bi-businessPhone', 'Business Phone', 'tel', d.businessPhone || '(405) 393-4161', '(405) 393-4161') +
+        fi('bi-businessEmail', 'Business Email', 'email', d.businessEmail || 'frank@irongequipment.com', 'frank@irongequipment.com') +
+        fi('bi-website', 'Website', 'text', d.website || 'irongequipment.com', 'irongequipment.com') +
+        fi('bi-mailingAddress', 'Mailing Address', 'textarea', d.mailingAddress, 'If different from registered address') +
+        fi('bi-operatingLocation', 'Operating Location', 'textarea', d.operatingLocation || 'Mother Road RV Boat & Trailer Storage, 16245 W HWY 66, Yukon, OK 73099', '') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title"><span class="bi-section-header">Licenses &amp; Permits</span></div></div>' +
+      '<div class="card-body">' +
+        fi('bi-salesTaxPermit', 'Oklahoma Sales Tax Permit #', 'text', d.salesTaxPermit, '') +
+        fi('bi-filingFrequency', 'Filing Frequency', 'text', d.filingFrequency || 'Monthly', 'Monthly') +
+        '<div class="fg"><label class="fl">🔒 Next Filing Due</label>' +
+          '<div class="bi-readonly-field" style="color:' + nextDueColor + ';">' + escHtml(nextDueLabel) + '</div>' +
+        '</div>' +
+        '<div class="fg">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+            '<label class="fl" style="margin:0;">Additional Permits</label>' +
+            '<button class="btn btn-ghost btn-sm" onclick="addBIPermit()" type="button">+ Add Permit</button>' +
+          '</div>' +
+          '<div id="bi-permits-list"></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title"><span class="bi-section-header">Banking &amp; Payments</span></div></div>' +
+      '<div class="card-body">' +
+        fi('bi-bankName', 'Bank Name', 'text', d.bankName, '') +
+        fi('bi-accountType', 'Account Type', 'text', d.accountType, 'Business Checking') +
+        fi('bi-stripeAccountId', 'Stripe Account ID', 'text', d.stripeAccountId, 'acct_XXXXXXXXX (reference only)') +
+        '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Never store full account numbers or passwords here.</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title"><span class="bi-section-header">Insurance</span></div></div>' +
+      '<div class="card-body">' +
+        insurWarning +
+        fi('bi-insuranceProvider', 'Insurance Provider', 'text', d.insuranceProvider, '') +
+        fi('bi-policyNumber', 'Policy Number', 'text', d.policyNumber, '') +
+        fi('bi-coverageType', 'Coverage Type', 'text', d.coverageType, 'Commercial General Liability') +
+        '<div class="fg"><label class="fl">Annual Premium</label>' +
+          '<div class="maint-cost-row"><span class="maint-cost-prefix">$</span>' +
+            '<input class="fi" id="bi-premiumAmount" type="number" min="0" step="0.01" value="' + escHtml(String(d.premiumAmount || '')) + '" placeholder="0.00" style="flex:1;">' +
+          '</div>' +
+        '</div>' +
+        fi('bi-renewalDate', 'Renewal Date', 'date', d.renewalDate, '') +
+        fi('bi-agentContactName', 'Agent Contact Name', 'text', d.agentContactName, '') +
+        fi('bi-agentContactPhone', 'Agent Contact Phone', 'tel', d.agentContactPhone, '') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title"><span class="bi-section-header">Notes</span></div></div>' +
+      '<div class="card-body">' +
+        fi('bi-notes', 'Notes', 'textarea', d.notes, 'Any additional business notes, reminders, or reference info', 'rows="4"') +
+      '</div>' +
+    '</div>' +
+
+    '<div style="padding:0 16px 24px;">' +
+      '<button class="btn btn-primary" id="bi-save-btn" onclick="saveBusinessInfo()" style="width:100%;padding:14px;font-size:14px;letter-spacing:2px;" type="button">Save All</button>' +
+    '</div>';
+
+  _biRenderPermits();
+}
+
+function _biRenderPermits() {
+  var container = g('bi-permits-list'); if (!container) return;
+  if (!_biAdditionalPermits.length) {
+    container.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px 0;">No additional permits. Tap + Add Permit to add one.</div>';
+    return;
+  }
+  container.innerHTML = _biAdditionalPermits.map(function(p, i) {
+    return '<div class="bi-permit-row">' +
+      '<input class="fi" id="bi-permit-name-' + i + '" type="text" value="' + escHtml(p.name) + '" placeholder="Permit name">' +
+      '<input class="fi" id="bi-permit-num-' + i + '" type="text" value="' + escHtml(p.number) + '" placeholder="Permit #">' +
+      '<button class="btn btn-danger btn-sm" onclick="removeBIPermit(' + i + ')" type="button">✕</button>' +
+    '</div>';
+  }).join('');
+}
+
+function _biSyncPermitsFromDOM() {
+  _biAdditionalPermits.forEach(function(p, i) {
+    var ne = g('bi-permit-name-' + i); if (ne) p.name = ne.value;
+    var ue = g('bi-permit-num-' + i); if (ue) p.number = ue.value;
+  });
+}
+
+function addBIPermit() {
+  _biSyncPermitsFromDOM();
+  _biAdditionalPermits.push({name: '', number: ''});
+  _biRenderPermits();
+}
+
+function removeBIPermit(idx) {
+  _biSyncPermitsFromDOM();
+  _biAdditionalPermits.splice(idx, 1);
+  _biRenderPermits();
+}
+
+async function saveBusinessInfo() {
+  _biSyncPermitsFromDOM();
+  function fv(id) { var el = g(id); return el ? el.value.trim() : ''; }
+  var data = {
+    legalName: fv('bi-legalName'), dba: fv('bi-dba'), ein: fv('bi-ein'),
+    formationDate: fv('bi-formationDate'), formationState: fv('bi-formationState'), llcType: fv('bi-llcType'),
+    agentName: fv('bi-agentName'), agentAddress: fv('bi-agentAddress'), agentPhone: fv('bi-agentPhone'), agentEmail: fv('bi-agentEmail'),
+    businessPhone: fv('bi-businessPhone'), businessEmail: fv('bi-businessEmail'), website: fv('bi-website'),
+    mailingAddress: fv('bi-mailingAddress'), operatingLocation: fv('bi-operatingLocation'),
+    salesTaxPermit: fv('bi-salesTaxPermit'), filingFrequency: fv('bi-filingFrequency'),
+    additionalPermits: _biAdditionalPermits.filter(function(p) { return p.name || p.number; }),
+    bankName: fv('bi-bankName'), accountType: fv('bi-accountType'), stripeAccountId: fv('bi-stripeAccountId'),
+    insuranceProvider: fv('bi-insuranceProvider'), policyNumber: fv('bi-policyNumber'), coverageType: fv('bi-coverageType'),
+    premiumAmount: fv('bi-premiumAmount'), renewalDate: fv('bi-renewalDate'),
+    agentContactName: fv('bi-agentContactName'), agentContactPhone: fv('bi-agentContactPhone'),
+    notes: fv('bi-notes')
+  };
+  var btn = g('bi-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  try {
+    var res = await fetch('/businessinfo', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+    if (!res.ok) throw new Error('save failed');
+    showToast('Business info saved — syncing to Drive...');
+    setTimeout(function() { showToast('✓ Synced to Google Drive'); }, 2000);
+    loadDashboardInsurReminder();
+  } catch(e) {
+    showToast('Save failed — please try again');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Save All'; }
+}
+
+async function exportBusinessInfo() {
+  try {
+    var res = await fetch('/businessinfo/export');
+    if (!res.ok) throw new Error('export failed');
+    var blob = await res.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'iron-g-business-info.txt';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  } catch(e) { showToast('Export failed'); }
+}
+
+// ── DASHBOARD INSURANCE REMINDER ──────────────────────
+
+async function loadDashboardInsurReminder() {
+  var container = g('dash-insur-reminder'); if (!container) return;
+  try {
+    var res = await fetch('/businessinfo');
+    if (!res.ok) { container.innerHTML = ''; return; }
+    var d = await res.json();
+    if (!d.renewalDate) { container.innerHTML = ''; return; }
+    var now = new Date();
+    var renewDate = new Date(d.renewalDate + 'T00:00:00');
+    var daysToRenew = Math.round((renewDate - now) / (1000 * 60 * 60 * 24));
+    var renewLabel = renewDate.toLocaleDateString('en-US', {month: 'long', day: 'numeric', year: 'numeric'});
+    var provider = d.insuranceProvider ? escHtml(d.insuranceProvider) : 'Check policy details';
+    if (daysToRenew < 0) {
+      container.innerHTML = '<div class="card dash-insur-card dash-insur-urgent">' +
+        '<div class="card-header"><div class="card-title" style="color:var(--danger);">⚠ Insurance renewal may be overdue</div>' +
+          '<button class="btn btn-ghost btn-sm" onclick="navTo(\'business-info\')">View</button></div>' +
+        '<div class="card-body"><div style="font-size:13px;color:var(--text);">' + provider + '</div></div>' +
+      '</div>';
+    } else if (daysToRenew <= 30) {
+      container.innerHTML = '<div class="card dash-insur-card dash-insur-warning">' +
+        '<div class="card-header"><div class="card-title" style="color:var(--warning);">🔔 Insurance renewal due ' + escHtml(renewLabel) + '</div>' +
+          '<button class="btn btn-ghost btn-sm" onclick="navTo(\'business-info\')">View</button></div>' +
+        '<div class="card-body"><div style="font-size:13px;color:var(--text);">' + provider + '</div></div>' +
+      '</div>';
+    } else {
+      container.innerHTML = '';
+    }
+  } catch(e) { container.innerHTML = ''; }
 }

@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=6.3">
+<link rel="stylesheet" href="styles.css?v=6.4">
 </head>
 <body>
 <div class="app">
@@ -43,6 +43,7 @@
     <div class="drawer-item" id="dnav-maintenance" onclick="navTo('maintenance')"><span class="drawer-icon">🔧</span>Maintenance</div>
     <div class="drawer-item" id="dnav-expenses" onclick="navTo('expenses')"><span class="drawer-icon">💰</span>Expenses</div>
     <div class="drawer-item" id="dnav-financials" onclick="navTo('financials')"><span class="drawer-icon">📊</span>Financials</div>
+    <div class="drawer-item" id="dnav-business-info" onclick="navTo('business-info')"><span class="drawer-icon">🏢</span>Business Info</div>
     <div class="drawer-item" id="dnav-docs" onclick="navTo('docs')"><span class="drawer-icon">📄</span>Docs</div>
     <div class="drawer-item" id="dnav-messaging" onclick="navTo('messaging')"><span class="drawer-icon">✉️</span>Messaging</div>
     <div class="drawer-item" id="dnav-notifications" onclick="navTo('notifications')"><span class="drawer-icon">🔔</span>Notifications<span class="drawer-notif-badge" id="drawerNotifBadge" style="display:none">0</span></div>
@@ -68,6 +69,7 @@
     </div>
     <div id="dash-maint-alerts"></div>
     <div id="dash-tax-reminder"></div>
+    <div id="dash-insur-reminder"></div>
     <div class="card"><div class="card-header"><div class="card-title">Fleet Status</div><button class="btn btn-ghost btn-sm" onclick="showPage('fleet')">View All</button></div><div class="card-body" id="dashFleet"></div></div>
     <div class="card"><div class="card-header"><div class="card-title">Upcoming Returns</div></div><div class="card-body" id="dashReturns"></div></div>
     <div class="card"><div class="card-header"><div class="card-title">Recent Activity</div></div><div class="card-body" id="dashActivity"></div></div>
@@ -329,6 +331,9 @@
   <!-- FINANCIALS -->
   <div class="page" id="page-financials"></div>
 
+  <!-- BUSINESS INFO -->
+  <div class="page" id="page-business-info"></div>
+
   <!-- DOCS -->
   <div class="page" id="page-docs">
     <div id="docsBody"></div>
@@ -482,6 +487,6 @@
 </div>
 
 </div><!-- /app -->
-<script src="app.js?v=7.3"></script>
+<script src="app.js?v=7.4"></script>
 </body>
 </html>

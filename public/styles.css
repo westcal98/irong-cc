@@ -504,3 +504,12 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 .dash-tax-card{margin-bottom:14px;}
 .dash-tax-warning{border-top:3px solid var(--warning) !important;}
 .dash-tax-urgent{border-top:3px solid var(--danger) !important;}
+
+/* ── BUSINESS INFO PAGE ── */
+.bi-section-header{font-family:'Oswald',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#5ba3d9;}
+.bi-readonly-field{background:#111;border:1px solid #1e1e1e;border-radius:6px;padding:10px 14px;font-size:13px;font-weight:500;}
+.bi-permit-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+.bi-permit-row .fi{margin-bottom:0;}
+.dash-insur-card{margin-bottom:14px;}
+.dash-insur-warning{border-top:3px solid var(--warning) !important;}
+.dash-insur-urgent{border-top:3px solid var(--danger) !important;}
