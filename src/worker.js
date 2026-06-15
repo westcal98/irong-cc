@@ -2395,11 +2395,12 @@ async function callAnthropicVision(env, imageBase64, mimeType, systemPrompt, use
 
   if (!res.ok) {
     console.error('[IronG] Anthropic API error:', await res.text());
-    return null;
+    throw new Error('Vision API request failed');
   }
 
   const data = await res.json();
   const text = data.content?.[0]?.text || '{}';
+  console.log('[IronG] Anthropic vision raw response:', text);
   try {
     const cleaned = text.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
     return JSON.parse(cleaned);
@@ -2419,8 +2420,8 @@ async function handleScanReceipt(request, env) {
     );
 
     if (!parsed) {
-      return new Response(JSON.stringify({ vendorName: null, vendorPhone: null, invoiceRef: null, laborCost: null, partsCost: null, totalCost: null, date: null, notes: null }), {
-        status: 200,
+      return new Response(JSON.stringify({ error: 'Could not parse scan results' }), {
+        status: 500,
         headers: { ...cors, 'Content-Type': 'application/json' },
       });
     }
@@ -2449,8 +2450,8 @@ async function handleScanExpenseImage(request, env) {
     );
 
     if (!parsed) {
-      return new Response(JSON.stringify({ vendorName: null, date: null, amount: null, description: null }), {
-        status: 200,
+      return new Response(JSON.stringify({ error: 'Could not parse scan results' }), {
+        status: 500,
         headers: { ...cors, 'Content-Type': 'application/json' },
       });
     }
