@@ -2371,36 +2371,31 @@ async function handleGetMaintenanceExport(request, env, trailerId) {
 
 // ── RECEIPT SCANNING ───────────────────────────────────
 
-async function callAnthropicVision(env, imageBase64, mimeType, systemPrompt, userText) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+async function callGeminiVision(env, imageBase64, mimeType, promptText) {
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent', {
     method: 'POST',
     headers: {
-      'x-api-key': env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
+      'X-goog-api-key': env.GEMINI_API_KEY,
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageBase64 } },
-          { type: 'text', text: userText },
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: mimeType, data: imageBase64 } },
+          { text: promptText },
         ],
       }],
     }),
   });
 
   if (!res.ok) {
-    console.error('[IronG] Anthropic API error:', await res.text());
+    console.error('[IronG] Gemini API error:', await res.text());
     throw new Error('Vision API request failed');
   }
 
   const data = await res.json();
-  const text = data.content?.[0]?.text || '{}';
-  console.log('[IronG] Anthropic vision raw response:', text);
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+  console.log('[IronG] Gemini vision raw response:', text);
   try {
     const cleaned = text.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
     return JSON.parse(cleaned);
@@ -2413,10 +2408,9 @@ async function handleScanReceipt(request, env) {
   const cors = getCors(request);
   try {
     const { imageBase64, mimeType } = await request.json();
-    const parsed = await callAnthropicVision(
+    const parsed = await callGeminiVision(
       env, imageBase64, mimeType,
-      'Extract receipt data and return ONLY valid JSON with fields: vendorName, vendorPhone, invoiceRef, laborCost, partsCost, totalCost, date, notes — use null for any field not found',
-      'Extract the receipt data from this image.'
+      'Extract receipt data and return ONLY valid JSON with fields: vendorName, vendorPhone, invoiceRef, laborCost, partsCost, totalCost, date, notes — use null for any field not found. Return ONLY valid JSON, no markdown or explanation.'
     );
 
     if (!parsed) {
@@ -2443,10 +2437,9 @@ async function handleScanExpenseImage(request, env) {
   const cors = getCors(request);
   try {
     const { imageBase64, mimeType } = await request.json();
-    const parsed = await callAnthropicVision(
+    const parsed = await callGeminiVision(
       env, imageBase64, mimeType,
-      'Extract expense data from this image (receipt, invoice, or screenshot) and return ONLY valid JSON with fields: vendorName, date, amount, description — use null for any field not found. "amount" must be a plain number (the total amount), and "description" should be a short summary of the item(s) or service purchased.',
-      'Extract the expense data from this image.'
+      'Extract expense data from this image (receipt, invoice, or screenshot) and return ONLY valid JSON with fields: vendorName, date, amount, description — use null for any field not found. "amount" must be a plain number (the total amount), and "description" should be a short summary of the item(s) or service purchased. Return ONLY valid JSON, no markdown or explanation.'
     );
 
     if (!parsed) {
