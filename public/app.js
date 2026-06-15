@@ -4408,10 +4408,10 @@ function openExpenseForm(record) {
       '<textarea class="fi form-textarea" id="ef-notes" rows="2" placeholder="Optional">' + escHtml(r.notes || '') + '</textarea>' +
     '</div>' +
 
-    '<div class="fg"><label class="fl">Receipt Scanner</label>' +
-      '<input type="file" id="ef-receipt-input" accept="image/*" capture="camera" style="display:none;" onchange="scanExpenseReceiptImage(this)">' +
+    '<div class="fg"><label class="fl">Receipt / Image Scanner</label>' +
+      '<input type="file" id="ef-receipt-input" accept="image/*,.jpg,.jpeg,.png,.webp" style="display:none;" onchange="scanExpenseReceiptImage(this)">' +
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
-        '<button class="btn btn-ghost btn-sm" onclick="g(\'ef-receipt-input\').click()" type="button">📷 Scan Receipt</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="g(\'ef-receipt-input\').click()" type="button">📷 Scan Receipt or Image</button>' +
         '<span id="exp-scan-status" style="font-size:12px;color:var(--muted);display:none;"></span>' +
       '</div>' +
       thumbHtml +
@@ -4460,7 +4460,7 @@ function scanExpenseReceiptImage(input) {
     if (thumb) { thumb.src = dataUrl; thumb.style.display = 'block'; }
     if (removeBtn) { removeBtn.style.display = 'inline-flex'; }
     if (wrap) { wrap.style.display = 'flex'; }
-    fetch('/maintenance/scan-receipt', {
+    fetch('/expenses/scan-receipt', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({imageBase64: base64, mimeType: mimeType})
@@ -4470,16 +4470,15 @@ function scanExpenseReceiptImage(input) {
     }).then(function(data) {
       function setField(id, val) { var el = g(id); if (el && val != null && String(val).trim()) el.value = val; }
       setField('ef-vendor', data.vendorName);
-      setField('ef-invoice', data.invoiceRef);
-      if (data.totalCost != null) setField('ef-amount', data.totalCost);
+      if (data.amount != null) setField('ef-amount', data.amount);
+      setField('ef-description', data.description);
       var _today = new Date().toISOString().slice(0, 10);
       var dateEl = g('ef-date');
       if (dateEl && dateEl.value === _today && data.date) dateEl.value = data.date;
-      if (data.notes) { var notesEl = g('ef-notes'); if (notesEl) notesEl.value = (notesEl.value ? notesEl.value + '\n' : '') + data.notes; }
       if (statusEl) statusEl.style.display = 'none';
-      showToast('✓ Receipt scanned — review and confirm fields');
+      showToast('✓ Scanned — review and confirm fields');
     }).catch(function() {
-      if (statusEl) { statusEl.textContent = 'Could not read receipt — enter manually'; statusEl.style.color = 'var(--danger)'; }
+      if (statusEl) { statusEl.textContent = 'Could not read image — enter manually'; statusEl.style.color = 'var(--danger)'; }
     });
   };
   reader.readAsDataURL(file);

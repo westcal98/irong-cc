@@ -435,6 +435,10 @@ export default {
       return handlePostTrailerName(request, env, id);
     }
 
+    if (url.pathname === '/expenses/scan-receipt' && request.method === 'POST') {
+      return handleScanExpenseImage(request, env);
+    }
+
     if (url.pathname === '/expenses/summary' && request.method === 'GET') {
       return handleGetExpenseSummary(request, env);
     }
@@ -2367,47 +2371,58 @@ async function handleGetMaintenanceExport(request, env, trailerId) {
 
 // ── RECEIPT SCANNING ───────────────────────────────────
 
+async function callAnthropicVision(env, imageBase64, mimeType, systemPrompt, userText) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageBase64 } },
+          { type: 'text', text: userText },
+        ],
+      }],
+    }),
+  });
+
+  if (!res.ok) {
+    console.error('[IronG] Anthropic API error:', await res.text());
+    return null;
+  }
+
+  const data = await res.json();
+  const text = data.content?.[0]?.text || '{}';
+  try {
+    const cleaned = text.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
+    return JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+}
+
 async function handleScanReceipt(request, env) {
   const cors = getCors(request);
   try {
     const { imageBase64, mimeType } = await request.json();
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        system: 'Extract receipt data and return ONLY valid JSON with fields: vendorName, vendorPhone, invoiceRef, laborCost, partsCost, totalCost, date, notes — use null for any field not found',
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageBase64 } },
-            { type: 'text', text: 'Extract the receipt data from this image.' },
-          ],
-        }],
-      }),
-    });
+    const parsed = await callAnthropicVision(
+      env, imageBase64, mimeType,
+      'Extract receipt data and return ONLY valid JSON with fields: vendorName, vendorPhone, invoiceRef, laborCost, partsCost, totalCost, date, notes — use null for any field not found',
+      'Extract the receipt data from this image.'
+    );
 
-    if (!res.ok) {
-      console.error('[IronG] Anthropic API error:', await res.text());
-      return new Response(JSON.stringify({ error: 'Failed to scan receipt' }), {
-        status: 500,
+    if (!parsed) {
+      return new Response(JSON.stringify({ vendorName: null, vendorPhone: null, invoiceRef: null, laborCost: null, partsCost: null, totalCost: null, date: null, notes: null }), {
+        status: 200,
         headers: { ...cors, 'Content-Type': 'application/json' },
       });
-    }
-
-    const data = await res.json();
-    const text = data.content?.[0]?.text || '{}';
-    let parsed;
-    try {
-      const cleaned = text.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      parsed = { vendorName: null, vendorPhone: null, invoiceRef: null, laborCost: null, partsCost: null, totalCost: null, date: null, notes: null };
     }
 
     return new Response(JSON.stringify(parsed), {
@@ -2416,6 +2431,36 @@ async function handleScanReceipt(request, env) {
     });
   } catch (err) {
     console.error('[IronG] Scan receipt error:', err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function handleScanExpenseImage(request, env) {
+  const cors = getCors(request);
+  try {
+    const { imageBase64, mimeType } = await request.json();
+    const parsed = await callAnthropicVision(
+      env, imageBase64, mimeType,
+      'Extract expense data from this image (receipt, invoice, or screenshot) and return ONLY valid JSON with fields: vendorName, date, amount, description — use null for any field not found. "amount" must be a plain number (the total amount), and "description" should be a short summary of the item(s) or service purchased.',
+      'Extract the expense data from this image.'
+    );
+
+    if (!parsed) {
+      return new Response(JSON.stringify({ vendorName: null, date: null, amount: null, description: null }), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify(parsed), {
+      status: 200,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[IronG] Scan expense image error:', err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
