@@ -151,12 +151,20 @@ function openDrawer() { g('drawer').classList.add('open'); g('drawerOverlay').cl
 function closeDrawer() { g('drawer').classList.remove('open'); g('drawerOverlay').classList.remove('open'); }
 function navTo(id) { closeDrawer(); showPage(id); }
 
-function fabNewBooking() {
+var FAB_PAGES = ['dashboard', 'active-rentals', 'drafts', 'maintenance', 'expenses'];
+
+function fabAction() {
+  if (currentPage === 'maintenance') { openNewMaintenanceRecord(); return; }
   if (currentPage === 'expenses') {
     if (_currentExpensesView === 'mileage') { openNewMileage(); return; }
     openNewExpense(); return;
   }
   startNewDraft();
+}
+
+function updateFab() {
+  var btn = g('fabBtn'); if (!btn) return;
+  btn.style.display = FAB_PAGES.indexOf(currentPage) !== -1 ? '' : 'none';
 }
 
 // ── NAVIGATION ──────────────────────────────────────
@@ -175,6 +183,7 @@ function showPage(id, skipPush) {
   var pg = g('page-' + id); if (pg) pg.classList.add('active');
   var tt = g('pageTitle'); if (tt) tt.textContent = titles[id] || id;
   currentPage = id;
+  updateFab();
   var bb = g('backBtn');
   if (bb) {
     if (id === 'dashboard') bb.classList.remove('visible');
@@ -3183,7 +3192,6 @@ async function drawMaintenancePage() {
       '<div class="maint-export-group">' +
         '<button class="btn btn-ghost btn-sm" onclick="exportMaintenanceCSV()">⬇ CSV</button>' +
         '<button class="btn btn-ghost btn-sm" onclick="printMaintenanceLog()">🖨 Print</button>' +
-        '<button class="btn btn-primary btn-sm" onclick="openNewMaintenanceRecord()">+ Add Record</button>' +
       '</div>' +
     '</div>' +
     '<div id="maint-analytics-section" class="maint-analytics-section" style="display:none;"></div>' +
