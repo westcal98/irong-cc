@@ -43,6 +43,7 @@ var EXPENSE_CATEGORIES = [
 var EXPENSE_PAYMENT_METHODS = ['Cash','Debit Card','Credit Card','Check','Bank Transfer','Other'];
 var _mileageRecordsCache = [];
 var _currentExpensesView = 'expenses';
+var _currentBookingsTab = 'active';
 var DEFAULT_SERVICE_TYPES = [
   'Tire Rotation/Replacement','Wheel Bearing Service','Brake Inspection/Replacement',
   'Light Repair/Replacement','Wiring Repair','Coupler Service/Replacement',
@@ -147,25 +148,34 @@ setInterval(function() {
 }, 1000);
 
 // ── DRAWER ──────────────────────────────────────────
-function openDrawer() { g('drawer').classList.add('open'); g('drawerOverlay').classList.add('open'); }
+function openDrawer() {
+  g('drawer').classList.add('open');
+  g('drawerOverlay').classList.add('open');
+  var mg = g('drawerMoreGroup');
+  if (mg) { mg.classList.remove('open'); }
+}
 function closeDrawer() { g('drawer').classList.remove('open'); g('drawerOverlay').classList.remove('open'); }
 function navTo(id) { closeDrawer(); showPage(id); }
 
-var FAB_PAGES = ['dashboard', 'active-rentals', 'drafts', 'maintenance', 'expenses'];
-
-function fabAction() {
-  if (currentPage === 'maintenance') { openNewMaintenanceRecord(); return; }
-  if (currentPage === 'expenses') {
-    if (_currentExpensesView === 'mileage') { openNewMileage(); return; }
-    openNewExpense(); return;
-  }
-  startNewDraft();
+function toggleDrawerMore() {
+  var mg = g('drawerMoreGroup');
+  if (mg) mg.classList.toggle('open');
 }
 
-function updateFab() {
-  var btn = g('fabBtn'); if (!btn) return;
-  btn.style.display = FAB_PAGES.indexOf(currentPage) !== -1 ? '' : 'none';
+// ── SPEED DIAL ──────────────────────────────────────
+function toggleSpeedDial() {
+  var sd = g('speedDial');
+  if (sd) sd.classList.toggle('open');
 }
+function closeSpeedDial() {
+  var sd = g('speedDial');
+  if (sd) sd.classList.remove('open');
+}
+function speedDial_newBooking() { closeSpeedDial(); startNewDraft(); }
+function speedDial_addExpense() { closeSpeedDial(); openNewExpense(); }
+function speedDial_logMaintenance() { closeSpeedDial(); openNewMaintenanceRecord(); }
+
+function updateFab() { /* speed dial is always visible; no-op */ }
 
 // ── NAVIGATION ──────────────────────────────────────
 var titles = {
@@ -192,9 +202,8 @@ function showPage(id, skipPush) {
   document.querySelectorAll('.drawer-item').forEach(function(el){ el.classList.remove('active'); });
   var drawerMap = {
     'dashboard':'dnav-dashboard','fleet':'dnav-fleet','active-rentals':'dnav-active-rentals',
-    'new-booking':'dnav-new-booking','settings':'dnav-settings','notifications':'dnav-notifications',
-    'drafts':'dnav-drafts','messaging':'dnav-messaging','docs':'dnav-docs',
-    'maintenance':'dnav-maintenance','expenses':'dnav-expenses','financials':'dnav-financials','business-info':'dnav-business-info'
+    'settings':'dnav-settings','messaging':'dnav-messaging','docs':'dnav-docs',
+    'maintenance':'dnav-maintenance','expenses':'dnav-expenses','financials':'dnav-financials'
   };
   var dnavId = drawerMap[id];
   if (dnavId) { var dn = g(dnavId); if (dn) dn.classList.add('active'); }
@@ -206,7 +215,7 @@ function showPage(id, skipPush) {
   if (id === 'process-return') drawProcessReturn(_processReturnId);
   if (id === 'history') drawHistory();
   if (id === 'new-booking') drawAvail();
-  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGlobalVarSettings(); loadGoogleDriveStatus(); }
+  if (id === 'settings') { drawFleetSettings(); updateStorageUsage(); loadGlobalVarSettings(); loadGoogleDriveStatus(); drawBusinessInfoPage('settings-bi-section'); }
   if (id === 'maintenance') drawMaintenancePage();
   if (id === 'expenses') drawExpensesPage();
   if (id === 'financials') drawFinancialsPage();
@@ -1222,8 +1231,10 @@ function discardDraftById(id) {
   if (!confirm('Discard this draft?')) return;
   idbDelete('draft:' + id).then(function() {
     if (_currentDraftId === id) { _currentDraftId = null; _currentDraftCreatedAt = null; }
-    drawDrafts();
-  }).catch(function() { drawDrafts(); });
+    if (currentPage === 'active-rentals') { drawActiveRentals(); } else { drawDrafts(); }
+  }).catch(function() {
+    if (currentPage === 'active-rentals') { drawActiveRentals(); } else { drawDrafts(); }
+  });
 }
 
 function newBooking() { startNewDraft(); }
@@ -1545,10 +1556,38 @@ function toggleLockboxHistory(tid) {
   if (btn) btn.textContent = open ? 'View History' : 'Hide History';
 }
 
+function switchBookingsTab(tab) {
+  _currentBookingsTab = tab;
+  var tActive = g('btab-active'); if (tActive) tActive.classList.toggle('active', tab === 'active');
+  var tDrafts = g('btab-drafts'); if (tDrafts) tDrafts.classList.toggle('active', tab === 'drafts');
+  var content = g('bookings-content');
+  if (!content) return;
+  if (tab === 'drafts') {
+    content.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Loading...</div>';
+    drawDrafts();
+  } else {
+    _renderActiveRentalsContent(content);
+  }
+}
+
 function drawActiveRentals() {
-  var container = g('activeBody'); if (!container) return;
+  var page = g('page-active-rentals'); if (!page) return;
+  page.innerHTML =
+    '<div class="bookings-view-tabs">' +
+      '<button class="bookings-tab' + (_currentBookingsTab === 'active' ? ' active' : '') + '" id="btab-active" onclick="switchBookingsTab(\'active\')">Bookings</button>' +
+      '<button class="bookings-tab' + (_currentBookingsTab === 'drafts' ? ' active' : '') + '" id="btab-drafts" onclick="switchBookingsTab(\'drafts\')">Drafts</button>' +
+    '</div>' +
+    '<div id="bookings-content"></div>';
+  var content = g('bookings-content');
+  if (_currentBookingsTab === 'drafts') { drawDrafts(); return; }
+  _renderActiveRentalsContent(content);
+}
+
+function _renderActiveRentalsContent(container) {
+  if (!container) return;
+  var addBtn = '<div style="display:flex;justify-content:flex-end;margin-bottom:12px;"><button class="btn btn-primary btn-sm" onclick="startNewDraft()">+ New Booking</button></div>';
   if (!state.rentals.length) {
-    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No active rentals.<br><br><button class="btn btn-primary" onclick="startNewDraft()">+ New Booking</button></div>';
+    container.innerHTML = addBtn + '<div style="text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;">No active rentals.</div>';
     return;
   }
   var statusLabels = {
@@ -1556,7 +1595,7 @@ function drawActiveRentals() {
     'confirmed':{cls:'b-available',text:'CONFIRMED'}, 'active':{cls:'b-rented',text:'OUT'},
     'returned':{cls:'b-returned',text:'RETURNED'}, 'cancelled':{cls:'b-overdue',text:'CANCELLED'}
   };
-  var h = '<div style="font-family:Oswald,sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + state.rentals.length + ' booking' + (state.rentals.length>1?'s':'') + '</div>';
+  var h = addBtn + '<div style="font-family:Oswald,sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">' + state.rentals.length + ' booking' + (state.rentals.length>1?'s':'') + '</div>';
   state.rentals.forEach(function(r){
     var sl = statusLabels[r.status] || {cls:'b-pending', text:(r.status||'IN PROGRESS').toUpperCase()};
     var dl = Math.ceil((new Date(r.ed+'T12:00:00')-new Date())/86400000);
@@ -1945,7 +1984,7 @@ async function completeReturn() {
 }
 
 function drawDrafts() {
-  var container = g('draftsBody'); if (!container) return;
+  var container = g('bookings-content') || g('draftsBody'); if (!container) return;
   container.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Loading...</div>';
   loadAllDrafts(function(drafts) {
     if (!drafts.length) {
@@ -3192,6 +3231,7 @@ async function drawMaintenancePage() {
       '<div class="maint-export-group">' +
         '<button class="btn btn-ghost btn-sm" onclick="exportMaintenanceCSV()">⬇ CSV</button>' +
         '<button class="btn btn-ghost btn-sm" onclick="printMaintenanceLog()">🖨 Print</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="openNewMaintenanceRecord()">+ Add Record</button>' +
       '</div>' +
     '</div>' +
     '<div id="maint-analytics-section" class="maint-analytics-section" style="display:none;"></div>' +
@@ -3519,9 +3559,11 @@ async function openMaintenanceRecordForm(tid, record) {
     '</div>' +
 
     '<div class="fg"><label class="fl">Receipt Scanner</label>' +
-      '<input type="file" id="mf-receipt-input" accept="image/*" capture="camera" style="display:none;" onchange="scanReceiptImage(this)">' +
+      '<input type="file" id="mf-receipt-cam" accept="image/*" capture="environment" style="display:none;" onchange="scanReceiptImage(this)">' +
+      '<input type="file" id="mf-receipt-gallery" accept="image/*,.jpg,.jpeg,.png,.webp" style="display:none;" onchange="scanReceiptImage(this)">' +
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
-        '<button class="btn btn-ghost btn-sm" onclick="g(\'mf-receipt-input\').click()" type="button">📷 Scan Receipt</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="g(\'mf-receipt-cam\').click()" type="button">📷 Take Photo</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="g(\'mf-receipt-gallery\').click()" type="button">🖼️ Choose Image</button>' +
         '<span id="scan-receipt-status" style="font-size:12px;color:var(--muted);display:none;"></span>' +
       '</div>' +
       thumbHtml +
@@ -3714,7 +3756,8 @@ function removeReceiptImage() {
   var thumb = g('receipt-thumb-preview'); if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
   var removeBtn = g('receipt-remove-btn'); if (removeBtn) removeBtn.style.display = 'none';
   var wrap = g('receipt-thumb-wrap'); if (wrap) wrap.style.display = 'none';
-  var inp = g('mf-receipt-input'); if (inp) inp.value = '';
+  var inpCam = g('mf-receipt-cam'); if (inpCam) inpCam.value = '';
+  var inpGal = g('mf-receipt-gallery'); if (inpGal) inpGal.value = '';
   if (_editingMaintenanceRecord) _editingMaintenanceRecord._clearImage = true;
 }
 
@@ -4172,7 +4215,7 @@ async function drawExpenseView() {
 
     content.innerHTML =
       '<div class="expense-page-header">' +
-        '<div style="font-family:\'Oswald\',sans-serif;font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;">All Expenses</div>' +
+        '<button class="btn btn-primary btn-sm" onclick="openNewExpense()">+ Add Expense</button>' +
         '<button class="btn btn-ghost btn-sm" onclick="exportExpensesCSV()">⬇ Export CSV</button>' +
       '</div>' +
       '<div class="expense-summary-pills">' +
@@ -4417,9 +4460,11 @@ function openExpenseForm(record) {
     '</div>' +
 
     '<div class="fg"><label class="fl">Receipt / Image Scanner</label>' +
-      '<input type="file" id="ef-receipt-input" accept="image/*,.jpg,.jpeg,.png,.webp" style="display:none;" onchange="scanExpenseReceiptImage(this)">' +
+      '<input type="file" id="ef-receipt-cam" accept="image/*" capture="environment" style="display:none;" onchange="scanExpenseReceiptImage(this)">' +
+      '<input type="file" id="ef-receipt-gallery" accept="image/*,.jpg,.jpeg,.png,.webp" style="display:none;" onchange="scanExpenseReceiptImage(this)">' +
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
-        '<button class="btn btn-ghost btn-sm" onclick="g(\'ef-receipt-input\').click()" type="button">📷 Scan Receipt or Image</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="g(\'ef-receipt-cam\').click()" type="button">📷 Take Photo</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="g(\'ef-receipt-gallery\').click()" type="button">🖼️ Choose Image</button>' +
         '<span id="exp-scan-status" style="font-size:12px;color:var(--muted);display:none;"></span>' +
       '</div>' +
       thumbHtml +
@@ -4497,7 +4542,8 @@ function removeExpenseReceiptImage() {
   var thumb = g('exp-receipt-thumb-preview'); if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
   var removeBtn = g('exp-receipt-remove-btn'); if (removeBtn) removeBtn.style.display = 'none';
   var wrap = g('exp-receipt-thumb-wrap'); if (wrap) wrap.style.display = 'none';
-  var inp = g('ef-receipt-input'); if (inp) inp.value = '';
+  var inpCam = g('ef-receipt-cam'); if (inpCam) inpCam.value = '';
+  var inpGal = g('ef-receipt-gallery'); if (inpGal) inpGal.value = '';
   if (_editingExpenseRecord) _editingExpenseRecord._clearImage = true;
 }
 
@@ -5106,8 +5152,8 @@ async function loadDashboardTaxReminder() {
 
 var _biAdditionalPermits = [];
 
-async function drawBusinessInfoPage() {
-  var page = g('page-business-info'); if (!page) return;
+async function drawBusinessInfoPage(targetId) {
+  var page = g(targetId || 'page-business-info'); if (!page) return;
   page.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);font-size:13px;">Loading...</div>';
 
   var d = {};

@@ -54,9 +54,38 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 /* ── HAMBURGER (bottom-left) ── */
 .hamburger{position:fixed;bottom:20px;left:20px;z-index:150;background:#1a1a1a;border:1px solid #2a2a2a;color:var(--text);width:52px;height:52px;border-radius:50%;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.6);}
 
-/* ── FAB (bottom-right) ── */
-.fab{position:fixed;bottom:20px;right:20px;z-index:150;background:var(--primary);color:var(--white);width:52px;height:52px;border-radius:50%;border:none;font-size:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(91,158,201,.4);line-height:1;}
+/* ── FAB / SPEED DIAL (bottom-right) ── */
+.speed-dial{position:fixed;bottom:20px;right:20px;z-index:150;display:flex;flex-direction:column;align-items:flex-end;gap:10px;}
+.speed-dial-overlay{display:none;position:fixed;inset:0;z-index:-1;}
+.speed-dial.open .speed-dial-overlay{display:block;}
+.speed-dial-items{display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;opacity:0;transform:translateY(10px);transition:opacity .2s ease,transform .2s ease;}
+.speed-dial.open .speed-dial-items{pointer-events:auto;opacity:1;transform:translateY(0);}
+.speed-dial-item{display:flex;align-items:center;gap:10px;background:#1c1c1c;border:1px solid #3a3a3a;color:var(--white);border-radius:26px;padding:10px 16px 10px 12px;cursor:pointer;font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;box-shadow:0 2px 12px rgba(0,0,0,.55);transition:background .15s,border-color .15s;}
+.speed-dial-item:hover{background:#2a2a2a;border-color:var(--primary);}
+.sd-icon{font-size:18px;line-height:1;width:22px;text-align:center;}
+.fab{background:var(--primary);color:var(--white);width:52px;height:52px;border-radius:50%;border:none;font-size:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(91,158,201,.4);line-height:1;transition:transform .2s ease,background .15s;}
 .fab:hover{background:var(--primary-hover);}
+.speed-dial.open .fab{transform:rotate(45deg);}
+
+/* ── DRAWER ACCORDION ── */
+.drawer-group-label{display:flex;align-items:center;justify-content:space-between;padding:12px 20px 6px;font-family:'Oswald',sans-serif;font-size:10px;font-weight:600;color:var(--muted);letter-spacing:2px;text-transform:uppercase;cursor:pointer;user-select:none;}
+.drawer-group-label:hover{color:var(--text);}
+.drawer-group-chevron{font-size:10px;transition:transform .2s;}
+.drawer-group.open .drawer-group-chevron{transform:rotate(180deg);}
+.drawer-group-body{display:none;}
+.drawer-group.open .drawer-group-body{display:block;}
+.drawer-divider{height:1px;background:#1a1a1a;margin:6px 0;}
+
+/* ── DASHBOARD QUICK ACTIONS ── */
+.dash-quick-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
+.dash-qa-btn{display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--surface);border:1px solid #2a2a2a;border-radius:8px;padding:14px 8px;cursor:pointer;font-family:'Oswald',sans-serif;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);transition:all .15s;border-top:2px solid transparent;}
+.dash-qa-btn:hover{border-top-color:var(--primary);color:var(--white);background:#1e1e1e;}
+.dash-qa-icon{font-size:20px;line-height:1;}
+
+/* ── BOOKINGS TABS ── */
+.bookings-view-tabs{display:flex;gap:0;border-bottom:1px solid #1a1a1a;margin-bottom:14px;}
+.bookings-tab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--muted);padding:12px 18px;font-size:13px;font-family:'Oswald',sans-serif;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;transition:color .15s,border-color .15s;margin-bottom:-1px;}
+.bookings-tab.active{color:var(--primary);border-bottom-color:var(--primary);}
 
 /* ── CARDS ── */
 .card{background:var(--surface);border:1px solid #1a1a1a;border-radius:6px;overflow:hidden;margin-bottom:14px;}

@@ -36,17 +36,24 @@
     <div class="drawer-sub">Command Center</div>
   </div>
   <div class="drawer-nav">
+    <!-- Primary -->
     <div class="drawer-item" id="dnav-dashboard" onclick="navTo('dashboard')"><span class="drawer-icon">⚡</span>Dashboard</div>
-    <div class="drawer-item" id="dnav-drafts" onclick="navTo('drafts')"><span class="drawer-icon">📑</span>Drafts</div>
     <div class="drawer-item" id="dnav-active-rentals" onclick="navTo('active-rentals')"><span class="drawer-icon">📋</span>Bookings</div>
-    <div class="drawer-item" id="dnav-fleet" onclick="navTo('fleet')"><span class="drawer-icon">🚛</span>Fleet</div>
-    <div class="drawer-item" id="dnav-maintenance" onclick="navTo('maintenance')"><span class="drawer-icon">🔧</span>Maintenance</div>
     <div class="drawer-item" id="dnav-expenses" onclick="navTo('expenses')"><span class="drawer-icon">💰</span>Expenses</div>
-    <div class="drawer-item" id="dnav-financials" onclick="navTo('financials')"><span class="drawer-icon">📊</span>Financials</div>
-    <div class="drawer-item" id="dnav-business-info" onclick="navTo('business-info')"><span class="drawer-icon">🏢</span>Business Info</div>
-    <div class="drawer-item" id="dnav-docs" onclick="navTo('docs')"><span class="drawer-icon">📄</span>Docs</div>
-    <div class="drawer-item" id="dnav-messaging" onclick="navTo('messaging')"><span class="drawer-icon">✉️</span>Messaging</div>
-    <div class="drawer-item" id="dnav-notifications" onclick="navTo('notifications')"><span class="drawer-icon">🔔</span>Notifications<span class="drawer-notif-badge" id="drawerNotifBadge" style="display:none">0</span></div>
+    <div class="drawer-item" id="dnav-maintenance" onclick="navTo('maintenance')"><span class="drawer-icon">🔧</span>Maintenance</div>
+    <div class="drawer-item" id="dnav-fleet" onclick="navTo('fleet')"><span class="drawer-icon">🚛</span>Fleet</div>
+    <!-- More accordion -->
+    <div class="drawer-divider"></div>
+    <div class="drawer-group" id="drawerMoreGroup">
+      <div class="drawer-group-label" onclick="toggleDrawerMore()">More<span class="drawer-group-chevron" id="drawerMoreChevron">▾</span></div>
+      <div class="drawer-group-body">
+        <div class="drawer-item" id="dnav-financials" onclick="navTo('financials')"><span class="drawer-icon">📊</span>Financials</div>
+        <div class="drawer-item" id="dnav-docs" onclick="navTo('docs')"><span class="drawer-icon">📄</span>Docs</div>
+        <div class="drawer-item" id="dnav-messaging" onclick="navTo('messaging')"><span class="drawer-icon">✉️</span>Messaging</div>
+      </div>
+    </div>
+    <div class="drawer-divider"></div>
+    <!-- Bottom -->
     <div class="drawer-item" id="dnav-settings" onclick="navTo('settings')"><span class="drawer-icon">⚙️</span>Settings</div>
   </div>
   <div class="drawer-footer">Iron G Equipment Co. LLC<br><span style="color:var(--primary)">(405) 393-4161</span></div>
@@ -66,6 +73,11 @@
       <div class="stat-card"><div class="stat-label">Active Rentals</div><div class="stat-value o" id="stat-active">0</div><div class="stat-sub">currently out</div></div>
       <div class="stat-card"><div class="stat-label">Month Revenue</div><div class="stat-value" id="stat-rev">$0</div><div class="stat-sub">confirmed paid</div></div>
       <div class="stat-card"><div class="stat-label">Total Rentals</div><div class="stat-value" id="stat-total">0</div><div class="stat-sub">all time</div></div>
+    </div>
+    <div class="dash-quick-actions">
+      <button class="dash-qa-btn" onclick="startNewDraft()"><span class="dash-qa-icon">📋</span>New Booking</button>
+      <button class="dash-qa-btn" onclick="openNewExpense()"><span class="dash-qa-icon">💰</span>Add Expense</button>
+      <button class="dash-qa-btn" onclick="openNewMaintenanceRecord()"><span class="dash-qa-icon">🔧</span>Log Maintenance</button>
     </div>
     <div id="dash-maint-alerts"></div>
     <div id="dash-tax-reminder"></div>
@@ -270,10 +282,8 @@
     <div class="card"><div class="card-header"><div class="card-title">Saved Drafts</div><button class="btn btn-primary btn-sm" onclick="startNewDraft()">+ New Booking</button></div><div class="card-body" id="draftsBody"></div></div>
   </div>
 
-  <!-- ACTIVE RENTALS -->
-  <div class="page" id="page-active-rentals">
-    <div id="activeBody"></div>
-  </div>
+  <!-- ACTIVE RENTALS / BOOKINGS -->
+  <div class="page" id="page-active-rentals"></div>
 
   <!-- PROCESS RETURN -->
   <div class="page" id="page-process-return">
@@ -423,6 +433,9 @@
       </div>
     </div>
 
+    <!-- Business Info (merged from standalone page) -->
+    <div id="settings-bi-section"></div>
+
     <div class="card">
       <div class="card-header"><div class="card-title">What's New — v6.0</div></div>
       <div class="card-body">
@@ -461,8 +474,16 @@
 <!-- HAMBURGER -->
 <button class="hamburger" id="hamburger" onclick="openDrawer()">☰</button>
 
-<!-- FAB -->
-<button class="fab" id="fabBtn" onclick="fabAction()">+</button>
+<!-- SPEED DIAL -->
+<div class="speed-dial" id="speedDial">
+  <div class="speed-dial-overlay" onclick="closeSpeedDial()"></div>
+  <div class="speed-dial-items" id="speedDialItems">
+    <button class="speed-dial-item" onclick="speedDial_newBooking()"><span class="sd-icon">📋</span>New Booking</button>
+    <button class="speed-dial-item" onclick="speedDial_addExpense()"><span class="sd-icon">💰</span>Add Expense</button>
+    <button class="speed-dial-item" onclick="speedDial_logMaintenance()"><span class="sd-icon">🔧</span>Log Maintenance</button>
+  </div>
+  <button class="fab" id="fabBtn" onclick="toggleSpeedDial()">+</button>
+</div>
 
 <!-- MAINTENANCE RECORD SLIDE PANEL -->
 <div id="maint-panel-overlay" class="maint-panel-overlay" onclick="closeMaintPanel()"></div>
